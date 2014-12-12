@@ -494,6 +494,17 @@ local function CreateSystemChatMessage(settings, chattedMessage)
 		end
 	end
 
+	-- TODO: fix how this interacts with fadeout and fadein
+	function this:SetTransparency(alpha)
+		local tweenableObjects = {
+			this.ChatMessage;
+		}
+		for _, object in pairs(tweenableObjects) do
+			object.TextTransparency = alpha
+			object.TextStrokeTransparency = math.min(1, alpha + this.Settings.TextStrokeTransparency)
+		end
+	end
+
 	local function CreateMessageGuiElement()
 		local systemMesasgeDisplayText = this.chatMessage or ""
 		local systemMessageSize = Util.GetStringTextBounds(systemMesasgeDisplayText, this.Settings.Font, this.Settings.FontSize, UDim2.new(0, 400, 0, 1000))
@@ -639,6 +650,24 @@ local function CreatePlayerChatMessage(settings, playerChatType, sendingPlayer, 
 					table.insert(this.FadeRoutines, Util.PropertyTweener(this.UserNameDot, 'ImageTransparency', this.UserNameDot.ImageTransparency, 1, 1, Util.Linear))
 				end
 			end
+		end
+	end
+
+	-- TODO: fix how this interacts with fadeout and fadein
+	function this:SetTransparency(alpha)
+		local tweenableObjects = {
+			this.WhisperToText;
+			this.WhisperFromText;
+			this.ChatModeButton;
+			this.UserNameButton;
+			this.ChatMessage;
+		}
+		for _, object in pairs(tweenableObjects) do
+			object.TextTransparency = alpha
+			object.TextStrokeTransparency = math.min(1, alpha + this.Settings.TextStrokeTransparency)
+		end
+		if this.UserNameDot then
+			this.UserNameDot.ImageTransparency = alpha
 		end
 	end
 
@@ -1362,6 +1391,46 @@ local function CreateChatWindowWidget(settings)
 		end
 	end
 
+	-- TODO: don't just do this function on canvasPositionChange but also on size changed etc...
+	function this:UpdateScrollingChats()
+		local topVerticalWindowBounds = 19 --this.ScrollingFrame.AbsoluteWindowSize.Y * 0.2
+		local bottomVerticalWindowBounds = 19
+
+		local sframeTop = this.ScrollingFrame.AbsolutePosition.Y
+		local sframeBottom = sframeTop + this.ScrollingFrame.AbsoluteWindowSize.Y
+		local topCutoff = sframeTop + topVerticalWindowBounds
+		local bottomCutoff = sframeBottom - bottomVerticalWindowBounds
+
+		local maxCanvasPosition = this.ScrollingFrame.CanvasSize.Y.Offset - this.ScrollingFrame.AbsoluteWindowSize.Y
+		local canvasCutoff = this.ScrollingFrame.CanvasPosition.Y + bottomVerticalWindowBounds
+		if this.ScrollingFrame.CanvasPosition.Y < topVerticalWindowBounds then
+			topCutoff = topCutoff - (topVerticalWindowBounds - this.ScrollingFrame.CanvasPosition.Y)
+		end
+		if maxCanvasPosition < canvasCutoff then
+			bottomCutoff = bottomCutoff + (canvasCutoff - maxCanvasPosition)
+		end
+
+		for index, message in pairs(this.Chats) do
+			local messageGui = message:GetGui()
+			if messageGui and this.ScrollingFrame then
+				local messageTop = messageGui.AbsolutePosition.Y
+				local messageBottom = messageTop + messageGui.AbsoluteSize.Y
+
+				-- Fade messages as they go to the top
+				if messageTop < topCutoff then
+					local alpha = (topCutoff - messageTop) / topVerticalWindowBounds
+					message:SetTransparency(Util.Clamp(0,1,alpha))
+				-- Fade messages as they go to the bottom
+				elseif messageBottom > bottomCutoff then
+					local alpha = (messageBottom - bottomCutoff) / bottomVerticalWindowBounds
+					message:SetTransparency(Util.Clamp(0,1,alpha))
+				else
+					message:SetTransparency(0)
+				end
+			end
+		end
+	end
+
 	function this:ScrollToBottom()
 		if this.ScrollingFrame then
 			this.ScrollingFrame.CanvasPosition = Vector2.new(0, math.max(0, this.ScrollingFrame.CanvasSize.Y.Offset - math.max(0, this.ScrollingFrame.AbsoluteWindowSize.Y)))
@@ -1533,9 +1602,9 @@ local function CreateChatWindowWidget(settings)
 			local scrollingFrame = Util.Create'ScrollingFrame'
 			{
 				Name = 'ChatWindow';
-				Size = UDim2.new(1, -4 - 10, 1, -20);
+				Size = UDim2.new(1, -4 - 10, 1, 0);
 				CanvasSize = UDim2.new(1, -4 - 10, 0, 0);
-				Position = UDim2.new(0, 10, 0, 10);
+				Position = UDim2.new(0, 10, 0, 0);
 				ZIndex = 1;
 				BackgroundColor3 = Color3.new(0, 0, 0);
 				BackgroundTransparency = 1;
@@ -1562,6 +1631,8 @@ local function CreateChatWindowWidget(settings)
 		local function OnChatWindowResize(prop)
 			if prop == 'AbsoluteSize' then
 				messageContainer.Position = UDim2.new(0, 0, 1, -messageContainer.Size.Y.Offset)
+			elseif prop == 'CanvasPosition' then
+				this:UpdateScrollingChats()
 			end
 		end
 		container.Changed:connect(function(prop) if prop == 'AbsoluteSize' then this:OnResize() end end)
