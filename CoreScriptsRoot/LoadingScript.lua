@@ -77,7 +77,7 @@ end
 
 
 function InfoProvider:LoadAssets()
-	Spawn(function() 
+	Spawn(function()
 		if PLACEID <= 0 then
 			while Game.PlaceId <= 0 do
 				wait()
@@ -131,7 +131,7 @@ function MainGui:GenerateMain()
 				ZIndex = 2
 			}
 		},
-		
+
 		create 'Frame' {
 			Name = 'CountFrame',
 			BackgroundTransparency = 1,
@@ -360,61 +360,67 @@ local fadeDown = true
 local lastRenderTime = nil
 local fadeCycleTime = 1.7
 
-renderSteppedConnection = Game:GetService("RunService").RenderStepped:connect(function()
-	if not currScreenGui then return end
-	if not currScreenGui:FindFirstChild("BlackFrame") then return end
 
-	if setVerb then
-		currScreenGui.ErrorFrame.CloseButton:SetVerb("Exit")
-		setVerb = false
-	end
+setChildrenTransparency(1)
+spawn(function()
+	wait(0.5)
+	fadeIn()
+	renderSteppedConnection = Game:GetService("RunService").RenderStepped:connect(function()
+		if not currScreenGui then return end
+		if not currScreenGui:FindFirstChild("BlackFrame") then return end
 
-	if currScreenGui.BlackFrame.CountFrame.PlaceLabel.Text == "" then
-		currScreenGui.BlackFrame.CountFrame.PlaceLabel.Text = InfoProvider:GetGameName()
-	end
-
-	if currScreenGui.BlackFrame.CountFrame.CreatorLabel.Text == "" then
-		local creatorName = InfoProvider:GetCreatorName()
-		if creatorName ~= "" then
-			currScreenGui.BlackFrame.CountFrame.CreatorLabel.Text = "By " .. creatorName
+		if setVerb then
+			currScreenGui.ErrorFrame.CloseButton:SetVerb("Exit")
+			setVerb = false
 		end
-	end
 
-	instanceCount = guiService:GetInstanceCount()
-	voxelCount = guiService:GetVoxelCount()
-	brickCount = guiService:GetBrickCount()
-	connectorCount = guiService:GetConnectorCount()
-
-	currScreenGui.BlackFrame.CountFrame.InstanceCount.Text = tostring(instanceCount)
-	currScreenGui.BlackFrame.CountFrame.BrickCount.Text = tostring(brickCount)
-	currScreenGui.BlackFrame.CountFrame.ConnectorCount.Text = tostring(connectorCount)
-
-	if voxelCount <= 0 then
-		currScreenGui.BlackFrame.CountFrame.VoxelCount.Text = "0"
-	else
-		currScreenGui.BlackFrame.CountFrame.VoxelCount.Text = tostring(round(voxelCount,4)) .." million"
-	end
-
-	if not lastRenderTime then
-		lastRenderTime = tick()
-		return
-	end
-
-	local currentTime = tick()
-	local fadeAmount = (currentTime - lastRenderTime) * fadeCycleTime
-	lastRenderTime = currentTime
-
-	if fadeDown then
-		currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency = currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency - fadeAmount
-		if currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency <= 0 then
-			fadeDown = false
+		if currScreenGui.BlackFrame.CountFrame.PlaceLabel.Text == "" then
+			currScreenGui.BlackFrame.CountFrame.PlaceLabel.Text = InfoProvider:GetGameName()
 		end
-	else
-		currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency = currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency + fadeAmount
-		if currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency >= 1 then
-			fadeDown = true
+
+		if currScreenGui.BlackFrame.CountFrame.CreatorLabel.Text == "" then
+			local creatorName = InfoProvider:GetCreatorName()
+			if creatorName ~= "" then
+				currScreenGui.BlackFrame.CountFrame.CreatorLabel.Text = "By " .. creatorName
+			end
 		end
-	end
+
+		instanceCount = guiService:GetInstanceCount()
+		voxelCount = guiService:GetVoxelCount()
+		brickCount = guiService:GetBrickCount()
+		connectorCount = guiService:GetConnectorCount()
+
+		currScreenGui.BlackFrame.CountFrame.InstanceCount.Text = tostring(instanceCount)
+		currScreenGui.BlackFrame.CountFrame.BrickCount.Text = tostring(brickCount)
+		currScreenGui.BlackFrame.CountFrame.ConnectorCount.Text = tostring(connectorCount)
+
+		if voxelCount <= 0 then
+			currScreenGui.BlackFrame.CountFrame.VoxelCount.Text = "0"
+		else
+			currScreenGui.BlackFrame.CountFrame.VoxelCount.Text = tostring(round(voxelCount,4)) .." million"
+		end
+
+		if not lastRenderTime then
+			lastRenderTime = tick()
+			return
+		end
+
+		local currentTime = tick()
+		local fadeAmount = (currentTime - lastRenderTime) * fadeCycleTime
+		lastRenderTime = currentTime
+
+		if fadeDown then
+			currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency = currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency - fadeAmount
+			if currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency <= 0 then
+				fadeDown = false
+			end
+		else
+			currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency = currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency + fadeAmount
+			if currScreenGui.BlackFrame.GraphicsFrame.LoadingImage.ImageTransparency >= 1 then
+				fadeDown = true
+			end
+		end
+	end)
 end)
 
 guiService.ErrorMessageChanged:connect(function()
@@ -442,7 +448,7 @@ end
 function fadeBackground()
 	if not currScreenGui then return end
 	if fadingBackground then return end
-	
+
 	if not currScreenGui:findFirstChild("BlackFrame") then return end
 
 	fadingBackground = true
@@ -466,12 +472,47 @@ function fadeBackground()
 	end
 end
 
-function fadeAndDestroyBlackFrame(blackFrame)
-	Spawn(function()
-		local countFrame = blackFrame:FindFirstChild("CountFrame")
-		local graphicsFrame = blackFrame:FindFirstChild("GraphicsFrame")
+function setChildrenTransparency(transparency)
+	local countFrame = blackFrame:FindFirstChild("CountFrame")
+	local graphicsFrame = blackFrame:FindFirstChild("GraphicsFrame")
 
-		local textChildren = countFrame:GetChildren()
+	local textChildren = countFrame and countFrame:GetChildren()
+	if textChildren then
+		for i = 1, #textChildren do
+			textChildren[i].TextTransparency = transparency
+			textChildren[i].TextStrokeTransparency = transparency
+		end
+	end
+	if graphicsFrame then
+		graphicsFrame.LoadingImage.ImageTransparency = transparency
+		graphicsFrame.LogoImage.ImageTransparency = transparency
+	end
+end
+
+function fadeIn()
+	--spawn(function()
+		local transparency = 1
+		local rateChange = -1.8
+		local lastUpdateTime = nil
+
+		while transparency > 0 do
+			if not lastUpdateTime then
+				lastUpdateTime = tick()
+			else
+				local newTime = tick()
+
+				transparency = math.max(0, transparency + rateChange * (newTime - lastUpdateTime))
+				setChildrenTransparency(transparency)
+
+				lastUpdateTime = newTime
+			end
+			wait()
+		end
+	--end)
+end
+
+function fadeAndDestroyBlackFrame(blackFrame)
+	spawn(function()
 		local transparency = 0
 		local rateChange = 1.8
 		local lastUpdateTime = nil
@@ -481,13 +522,9 @@ function fadeAndDestroyBlackFrame(blackFrame)
 				lastUpdateTime = tick()
 			else
 				local newTime = tick()
+
 				transparency = transparency + rateChange * (newTime - lastUpdateTime)
-				for i =1, #textChildren do
-					textChildren[i].TextTransparency = transparency
-					textChildren[i].TextStrokeTransparency = transparency
-				end
-				graphicsFrame.LoadingImage.ImageTransparency = transparency
-				graphicsFrame.LogoImage.ImageTransparency = transparency
+				setChildrenTransparency(transparency)
 
 				lastUpdateTime = newTime
 			end
@@ -501,7 +538,7 @@ function destroyLoadingElements()
 	if not currScreenGui then return end
 	if destroyedLoadingGui then return end
 	destroyedLoadingGui = true
-	
+
 	local guiChildren = currScreenGui:GetChildren()
 	for i=1, #guiChildren do
 		-- need to keep this around in case we get a connection error later
