@@ -6,7 +6,42 @@
 			<Content name="LinkedSource"><null></null></Content>
 			<string name="Name">IsometricCamera</string>
 			<ProtectedString name="Source"><![CDATA[local PlayersService = game:GetService('Players')
+local UserInputService = game:GetService('UserInputService')
 local RootCameraCreator = require(script.Parent)
+
+local MODES = 
+{
+	["Locked"] = true;
+	["Free"] = true;
+}
+
+
+-- http://www.siggraph.org/education/materials/HyperGraph/raytrace/rayplane_intersection.htm
+function RayPlaneIntersection(ray, planeNormal, planeDistanceFromOrigin)
+	if not ray then print("RayPlaneIntersection: ray is nil") return end
+	if not planeNormal then print("RayPlaneIntersection: planeNormal is nil") return end
+	if not planeDistanceFromOrigin then print("RayPlaneIntersection: planeDistanceFromOrigin is nil") return end
+	
+	-- if XZ-plane then planeNormal is always 0,1,0
+	planeNormal = planeNormal.unit
+	ray = ray.Unit
+	-- compute Pn (dot) Rd = Vd and check if Vd == 0 then we know ray is parallel to plane
+	local Vd = planeNormal:Dot(ray.Direction)
+	
+	-- can increase this a little bit to account for imprecision or very close angles to zero
+	if Vd == 0 then -- parallel, no intersection
+		return nil
+	end
+
+	local V0 = -(planeNormal:Dot(ray.Origin) + planeDistanceFromOrigin)
+	local t = V0 / Vd
+	if t < 0 then --plane is behind ray origin, and thus there is no intersection
+		return nil
+	end
+	
+	local intersection = ray.Origin + ray.Direction * t
+	return intersection
+end
 
 local function CreateIsometricCamera()
 	local module = RootCameraCreator()
@@ -18,7 +53,353 @@ local function CreateIsometricCamera()
 	local pitch = math.rad(-55)
 	local roll = math.rad(0)
 	local yaw = math.rad(45)
+	local regionBounds = Region3.new(Vector3.new(-1e8, -1e8, -1e8), Vector3.new(1e8,1e8, 1e8))
+	local freeSubjectPosition = Vector3.new()
 	
+	local mode = "Free"
+	
+	
+	local function setFreeModeFocusPosition(position)
+		-- TODO: bounds check the frustrum against the box
+		freeSubjectPosition = position
+	end
+	
+	local function onModeChanged(newMode)
+		if mode == "Free" then
+			local camera = 	workspace.CurrentCamera
+			if camera then
+				setFreeModeFocusPosition(camera.Focus.p)
+			end
+		else
+			if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+		end
+	end
+	
+	function module:SetMode(newMode)
+		if MODES[newMode] then
+			if newMode ~= mode then
+				mode = newMode
+				onModeChanged(mode)
+			end
+		end
+	end
+	
+	
+	--[[
+	function module:ComputeVelocityPan()
+		local function RemoveOldTime(timeTable, newestTime, timeCutoff)
+			for i = #timeTable, 1, -1 do
+				if timeTable[i]['Time'] < newestTime - timeCutoff then
+					timeTable[i] = nil
+				end
+			end
+		end
+		
+		if #self.FocusHistory >= 2 then
+			local velocityHistory = {}
+			local velocity = Vector3.new()
+			for i = #self.FocusHistory, 2, -1 do
+				local lastFrame = self.FocusHistory[i]
+				local currFrame = self.FocusHistory[i-1]
+				local deltaTime = currFrame['Time'] - lastFrame['Time']
+				local deltaPos = currFrame['Pos'] - lastFrame['Pos']
+				velocity = velocity + (deltaPos / deltaTime) * ((#self.FocusHistory - i + 1) / (#self.FocusHistory))
+				table.insert(velocityHistory, {['Time'] = (currFrame['Time'] + lastFrame['Time'])/2, ['DeltaTime'] = deltaTime, ['Velocity'] = deltaPos / deltaTime})
+			end
+			
+			local stopped = true
+			if #velocityHistory >= 2 then
+				RemoveOldTime(velocityHistory, velocityHistory[#velocityHistory]['Time'], 0.06)
+				for i, velocityFrame in pairs(velocityHistory) do
+					if velocityFrame['Velocity'].magnitude > 30 then
+						stopped = false
+					end
+				end
+			end
+			if stopped then -- quit if they stopped moving at the end
+				return Vector3.new(0,0,0)
+			end
+			
+			velocity = velocity / (#self.FocusHistory * 0.5)
+			if velocity.magnitude > self.MaxVelocity then
+				velocity = velocity.unit * self.MaxVelocity
+			end
+			return velocity
+		end
+		-- otherwise return 0, didn't move
+		return Vector3.new(0,0,0)
+	end
+	
+	function module:StartVelocityPan(velocity)
+		if velocity and velocity.magnitude >= self.MinActivationSpeed then
+			if velocity.magnitude > self.MaxVelocity then
+				velocity = velocity.unit * self.MaxVelocity
+			end
+			
+			local startPosition = self.Focus
+			local spline = SplineLibrary(velocity.magnitude, 0.004)
+			local unitVelocity = velocity.unit
+			
+			local thisPan;
+			thisPan = Scheduler:OnRender(function()
+				if self.PanEnabled == true and self.Last3DPos == nil and (self.MouseDown == false or self.TouchPanConn) and self.On.Value == true and (thisPan and thisPan == self.CurrentPan) then
+					local currVelocity, distance = spline:CalculateSpline()
+					if currVelocity == 0 and distance == 0 then -- tween is over
+						thisPan:disconnect()
+					else
+						local newPosition = startPosition + unitVelocity * distance
+						self:SetFocus(newPosition)
+					end
+					
+				else
+					thisPan:disconnect()
+				end			
+			end, 'camera.velocitypan')
+			self.CurrentPan = thisPan
+		end
+	end
+	
+	local LastZoom = nil
+	
+	function module:SetUpFreePan()
+		self:TearDownFreePan()
+		
+		self.ZoomEnabled = true
+		self.PanEnabled = true
+		self.RotateEnabled = true
+		
+		local function OnMouseDown()
+			if not self.MouseDown then -- Ignore mouse update if we already have a finger down, helps with multitouch
+				self.MouseDown = true;
+				MyMouse.Move:wait()
+				if self.MouseDown then -- check if mouse is still down
+					self.Last3DPos = (RayPlaneIntersection(MyMouse.UnitRay, Vector3.new(0,1,0), 0) - self.Focus) * Vector3.new(1,0,1)
+					self.FocusHistory = {}
+				end
+			else -- two downs in a row! abort pan, abort!
+				self.Last3DPos = nil
+				self.FocusHistory = {}
+			end
+		end
+		
+		local function OnMouseUp()
+			self.MouseDown = false
+			self.Last3DPos = nil
+			local vel = self:ComputeVelocityPan()
+			self:StartVelocityPan(vel)
+			self.FocusHistory = {}
+		end
+		
+		if UserInputService:GetService('UserInputService').TouchEnabled then
+			local startScale = nil
+			self.TouchPinchConn = UserInputService.TouchPinch:connect(function(touchPos, scale, vel, state, processed)
+				if self.ZoomEnabled and not processed then
+					if state == Enum.UserInputState.Begin then
+						startScale = 1
+					end
+					if startScale == nil then
+						startScale = scale
+						-- Avoid divide by zero
+						if startScale == 0 then
+							startScale = 0.001
+						end
+					end
+					
+					local adjustedScale = scale / startScale
+					
+					if #touchPos == 2 then
+						LastZoom = nil
+						if self.StartPinchZoom == nil then
+							self.StartPinchZoom = clampVec3(self.MinCameraOffset, self.MaxCameraOffset, self.IdealCameraOffset / (1 / adjustedScale))
+						end
+						
+						self.IdealCameraOffset = clampVec3(self.MinCameraOffset, self.MaxCameraOffset, self.StartPinchZoom / adjustedScale)
+						
+						-- update camera because we have moved the camera
+						self:FreePan()
+					end
+				end
+				if state == Enum.UserInputState.End then
+					self.StartPinchZoom = nil
+					startScale = nil
+					if self.ZoomEnabled then
+						class:DefaultZoom()
+					end
+				end
+			end)
+			self.TouchRotateConn = UserInputService.TouchRotate:connect(function(touchPositions, rotation, velocity, state, processed)
+				if self.RotateEnabled and not processed then
+					if #touchPositions == 2 then
+						if self.LastRotateValue == nil then
+							self.LastRotateValue = rotation
+						end
+						if self.LastRotateValue then
+							local deltaRotation = rotation - self.LastRotateValue
+							self.LastRotateValue = rotation
+							
+							self.CameraYaw = self.CameraYaw + deltaRotation
+							
+							-- update camera because we have moved the camera
+							self:FreePan()
+						end
+					end
+				end
+				
+				if state == Enum.UserInputState.End then
+					self.LastRotateValue = nil
+				end
+			end)
+			local lastNumFingers = 0
+			local lastTouchPos = Vector2.new()
+			-- TOOD: This is a hack to get around enabling the camera when the finger lets go and then immediating velocity panning
+			-- loses some inputs on low fps devices.
+			local nonEndStateSeen = false
+			local lastState = Enum.UserInputState.End
+			self.TouchPanConn = UserInputService.TouchPan:connect(function(touchPositions, totalTranslation, velocity, state, processed)
+				-- Ridiculous hack you have to do because begin doesn't fire sometimes
+				if state ~= Enum.UserInputState.End and lastState == Enum.UserInputState.End then
+					if not processed then
+						nonEndStateSeen = true
+					end
+				end
+				-- Determine a midpoint between all of our finger touches
+				if self.Camera and MyMouse and self.PanEnabled then
+					local avgPos = Utility.AverageVec2(touchPositions)
+					-- if the state is begin then we want to just want to set the start
+					-- this is essentially our mousedown event
+					if state == Enum.UserInputState.Begin or self.Last3DPos == nil then
+						if not processed then
+							local luaRay = GetUnitRay(avgPos.X, avgPos.Y, Utility.ViewSizeX(), Utility.ViewSizeY(), self.Camera)
+							if luaRay then
+								local hitPt = (RayPlaneIntersection(luaRay, Vector3.new(0,1,0), 0) - self.Focus) * Vector3.new(1,0,1)							
+								if hitPt then
+									self.Last3DPos = hitPt
+								end
+							end
+							self.FocusHistory = {} -- reset focus history
+						end
+					elseif state == Enum.UserInputState.Change then
+						if nonEndStateSeen then
+							local last3DPos = self.Last3DPos
+							local luaRay = GetUnitRay(avgPos.X, avgPos.Y, Utility.ViewSizeX(), Utility.ViewSizeY(), self.Camera)
+							if luaRay and last3DPos then
+								local hitPt = (RayPlaneIntersection(luaRay, Vector3.new(0,1,0), 0) - self.Focus) * Vector3.new(1,0,1)
+								if lastNumFingers ~= #touchPositions then -- new finger, reset position history
+									last3DPos = hitPt
+									self.FocusHistory = {}
+								end
+								if hitPt and self.Focus then
+									local diffVector = last3DPos - hitPt
+									self.Last3DPos = hitPt
+									self:SetFocus(self.Focus + diffVector)
+									-- update camera because we have move the camera
+									self:FreePan()
+								end
+							end
+						end
+					end
+					-- Ideally should be in the processed if-block, but processed is being set to true on EndState for no reason
+					if state == Enum.UserInputState.End then
+						if nonEndStateSeen then
+							local threeDVelocity = Vector3.new(-velocity.X, 0 , -velocity.Y)
+							threeDVelocity = self.Camera.CoordinateFrame:vectorToWorldSpace(threeDVelocity)
+							self:StartVelocityPan(PixelToStuds(self.Camera,  self.Camera.CoordinateFrame.p.Y) * threeDVelocity)
+						end
+					end
+				end
+				lastNumFingers = #touchPositions
+				lastState = state
+				if state == Enum.UserInputState.End then
+					self.Last3DPos = nil
+					nonEndStateSeen = false
+					self.FocusHistory = {}
+				end
+			end)
+			self.InputBeganConn = UserInputService.InputBegan:connect(function()
+				if self.CurrentPan then
+					self.CurrentPan:disconnect()
+					self.CurrentPan = nil -- kill any pans
+				end
+			end)
+		end
+		
+		UserInputService.InputBegan:connect(function(input, processed)
+		
+	end
+	--]]
+	
+	
+	local mouseDown = false
+	local lastPos = nil
+	local function OnMouseMoved(input, processed)
+		if mouseDown then
+			local position = input.Position
+			if lastPos then
+				--local delta = position - lastPos
+				local delta = input.Delta
+				local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X, 0, delta.Y)) * Vector3.new(1,0,1)
+				setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+			end
+			lastPos = position
+		end
+	end
+	
+	
+	local superGetSubjectPosition = module.GetSubjectPosition
+	function module:GetSubjectPosition()
+		if mode == "Locked" then
+			return superGetSubjectPosition(self)
+		end
+		local newLookVector = self:ComputerLookVector()
+		
+		return freeSubjectPosition
+	end
+	
+	local InputBeganConn, InputChangedConn, InputEndedConn = nil, nil, nil
+	local superSetEnabled = module.SetEnabled
+	function module:SetEnabled(newState)
+		local wasEnabled = self.Enabled
+		superSetEnabled(self, newState)
+		
+		if newState ~= wasEnabled then
+			if self.Enabled then
+				InputBeganConn = UserInputService.InputBegan:connect(function(input, processed)
+					if input.UserInputType == Enum.UserInputType.MouseButton2 then
+						mouseDown = true
+						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+							UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+						end
+					end
+				end)
+				InputChangedConn = UserInputService.InputChanged:connect(function(input, processed)
+					if input.UserInputType == Enum.UserInputType.MouseMovement then
+						OnMouseMoved(input, processed)
+					end
+				end)
+				InputEndedConn = UserInputService.InputEnded:connect(function(input, processed)
+					if input.UserInputType == Enum.UserInputType.MouseButton2 then
+						mouseDown = false
+						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+						end
+						lastPos = nil
+					end
+				end)
+			else
+				if InputBeganConn then InputBeganConn:Destroy() InputBeganConn = nil end
+				if InputChangedConn then InputChangedConn:Destroy() InputChangedConn = nil end
+				lastPos = nil				
+				if InputEndedConn then InputEndedConn:Destroy() InputEndedConn = nil end
+				mouseDown = false
+			end
+		end
+	end
+	
+	function module:ComputerLookVector()
+		return (CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0) * CFrame.Angles(0, 0, roll)).lookVector
+	end
 	
 	
 	local lastUpdate = tick()
@@ -34,7 +415,7 @@ local function CreateIsometricCamera()
 			if zoom <= 0 then
 				zoom = 0.1
 			end
-			local newLookVector = (CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0) * CFrame.Angles(0, 0, roll)).lookVector
+			local newLookVector = self:ComputerLookVector()
 			
 			camera.Focus = CFrame.new(subjectPosition)
 			camera.CoordinateFrame = CFrame.new(camera.Focus.p - (zoom * newLookVector), camera.Focus.p)
