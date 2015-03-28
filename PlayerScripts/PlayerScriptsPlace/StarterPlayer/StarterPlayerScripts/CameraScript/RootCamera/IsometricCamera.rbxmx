@@ -46,8 +46,8 @@ function RayPlaneIntersection(ray, planeNormal, planeDistanceFromOrigin)
 end
 
 
-local MAX_HISTORY_COUNT = 15
-local MAX_HISTORY_DURATION = 0.250
+local MAX_HISTORY_COUNT = 7
+local MAX_HISTORY_DURATION = 0.110
 local ZERO_VECTOR = Vector2.new(0,0)
 
 local function CreateVelocityCalculator()
@@ -62,10 +62,9 @@ local function CreateVelocityCalculator()
 
 		local historyObject = {['position'] = position; ['time'] = timestamp;}
 
-		while #history > MAX_HISTORY_COUNT do
+		while #history >= MAX_HISTORY_COUNT do
 			table.remove(history, 1)
 		end
-
 		while #history > 0 and history[1]['time'] + MAX_HISTORY_DURATION < now do
 			table.remove(history, 1)
 		end
@@ -113,6 +112,40 @@ local function CreateVelocityCalculator()
 	return this
 end
 
+local function clamp(low, high, num)
+	if low <= high then
+		return math.min(high, math.max(low, num))
+	end
+	return num
+end
+
+local k = 0.3 --0.35
+local lowerK = 0.3
+local function SCurveTranform(t)
+	t = clamp(-1,1,t)
+	if t >= 0 then
+		return (k*t) / (k - t + 1)
+	end
+	return -((lowerK*-t) / (lowerK + t + 1))
+end
+
+local function toSCurveSpace(t)
+	return (2*math.abs(t) - 1)
+end
+
+local function fromSCurveSpace(t)
+	return t/2 + 0.5
+end
+
+
+local function dampen(amplitude, targetPosition, startTime, duration)
+	local timeDelta = tick() - startTime
+	local position = targetPosition - amplitude * math.exp(-timeDelta / duration)
+	if timeDelta > (6 * duration) then
+		return targetPosition
+	end
+	return position
+end
 
 
 local function CreateIsometricCamera()
@@ -406,17 +439,21 @@ local function CreateIsometricCamera()
 
 	local mouseDown = false
 	local lastPos = nil
+	local freshDelta = false
 	local function OnMouseMoved(input, processed)
 		if mouseDown then
 			local position = input.Position
 			if lastPos then
 				--local delta = position - lastPos
-				local delta = input.Delta
+				local delta = freshDelta and input.Delta or Vector3.new()
 				local currPos = lastPos + delta
-				local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X, 0, delta.Y)) * Vector3.new(1,0,1)
-				setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+				if freshDelta then
+					local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X, 0, delta.Y)) * Vector3.new(1,0,1)
+					setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+				end
 				velocityCalculator:AddMovementEvent(currPos, tick())
 				lastPos = currPos
+				freshDelta = false
 			else
 				lastPos = position
 			end
@@ -435,6 +472,7 @@ local function CreateIsometricCamera()
 	end
 
 	local InputBeganConn, InputChangedConn, InputEndedConn = nil, nil, nil
+	local panTrackRoutine = nil
 	local superSetEnabled = module.SetEnabled
 	function module:SetEnabled(newState)
 		local wasEnabled = self.Enabled
@@ -453,7 +491,20 @@ local function CreateIsometricCamera()
 				end)
 				InputChangedConn = UserInputService.InputChanged:connect(function(input, processed)
 					if input.UserInputType == Enum.UserInputType.MouseMovement then
+						freshDelta = true
 						OnMouseMoved(input, processed)
+						if panTrackRoutine == nil and mouseDown then
+							panTrackRoutine = coroutine.create(function()
+								while mouseDown do
+									OnMouseMoved(input, processed)
+									--print("Adding input delta:" , input.Delta)
+									--input.Delta = Vector3.new(1,1,1)
+									--velocityCalculator:AddMovementEvent(input.Position, tick())
+									RunService.RenderStepped:wait()
+								end
+							end)
+							coroutine.resume(panTrackRoutine)
+						end
 					end
 				end)
 				InputEndedConn = UserInputService.InputEnded:connect(function(input, processed)
@@ -463,19 +514,42 @@ local function CreateIsometricCamera()
 							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 						end
 						lastPos = nil
+						
+						panTrackRoutine = nil
 
 						-- TODO: Do this more cleanly and add cancelling. Also use a better dampening curve
 						local velocity = velocityCalculator:CalculateVelocity()
 						spawn(function()
+							local scaleFactor = 0.85 --0.95
+							local amplitude = (velocity / 5) * scaleFactor
+							local targetPosition = amplitude
+							
+							local duration = 0.2
+							local start = tick()
+							local finish = start + duration 
 							local last = tick()
-							while velocity.magnitude > 5 do
-								local now = tick()
-								local timeDelta = (now - last)
+							local alpha = 1
+							local currPosition = Vector3.new()
+							while currPosition ~= targetPosition do -- tick() < finish do
+								local newPosition = dampen(amplitude, targetPosition, start, duration)
+								local delta = newPosition - currPosition
+								currPosition = newPosition
+								--local now = tick()
+								--local timeDelta = (now - last)
+								--[[
 								local delta = timeDelta * velocity
+								velocity = velocity * (1 - 5 * timeDelta)
+								--]]
+								
+								--alpha = (1 - fromSCurveSpace(SCurveTranform(toSCurveSpace((tick() - start) / duration))))
+								--local currVelocity = velocity * alpha
+								--print("CurrVelocity:" , currVelocity , "Alpha:" , alpha)
+								
+								--local delta = timeDelta * currVelocity
 								local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X, 0, delta.Y)) * Vector3.new(1,0,1)
 								setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
-								velocity = velocity * (1 - 5 * timeDelta)
-								last = now
+								
+								--last = now
 								RunService.RenderStepped:wait()
 							end
 						end)
