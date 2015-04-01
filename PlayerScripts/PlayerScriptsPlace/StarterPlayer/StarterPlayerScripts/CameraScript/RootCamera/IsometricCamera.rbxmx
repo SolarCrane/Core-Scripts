@@ -190,6 +190,57 @@ local function PointsToEdgeOfAABB(boundingRegion, pts)
 	return boxMin.X - minX, maxX - boxMax.X, boxMin.Z - minZ, maxZ - boxMax.Z
 end
 
+local function getMaxZoom(camera, boundingRegion)
+	if camera and boundingRegion then
+		local halfXWidth = boundingRegion.Size.X/2
+		local halfYHeight = boundingRegion.Size.Z/2
+		
+		local xd = halfXWidth / math.tan(math.rad(camera.FieldOfView) / 2)
+		local zd = halfYHeight / math.tan(math.rad(camera.FieldOfView) / 2)
+		
+		
+		
+		return math.min(xd, zd)
+	end
+end
+
+local function constrainPointToFrustum(position, newFocus, newCFrame, regionBounds)
+	if newFocus and newCFrame then
+		local savedFocus = workspace.CurrentCamera.Focus
+		local savedCFrame = workspace.CurrentCamera.CoordinateFrame
+		workspace.CurrentCamera.Focus = newFocus
+		workspace.CurrentCamera.CoordinateFrame = newCFrame
+		
+		local pts = {FindFrustrumCornersOnPlane(workspace.CurrentCamera)}
+		workspace.CurrentCamera.Focus = savedFocus
+		workspace.CurrentCamera.CoordinateFrame = savedCFrame
+		if #pts > 0 then
+			local distanceFromEdges = {PointsToEdgeOfAABB(regionBounds, pts)}
+			if #distanceFromEdges > 0 then
+				if distanceFromEdges[1] > 0 then
+					position = position + Vector3.new(distanceFromEdges[1], 0, 0)
+				end
+				if distanceFromEdges[2] > 0 then
+					position = position - Vector3.new(distanceFromEdges[2], 0, 0)
+				end
+				if distanceFromEdges[3] > 0 then
+					position = position + Vector3.new(0, 0, distanceFromEdges[3])
+				end
+				if distanceFromEdges[4] > 0 then
+					position = position - Vector3.new(0, 0, distanceFromEdges[4])
+				end
+			end
+		end
+	end
+	return position
+end
+
+local function constrainPointToAABB(position, boundingRegion)
+	local boxMin = boundingRegion.CFrame.p - boundingRegion.Size/2
+	local boxMax = boundingRegion.CFrame.p + boundingRegion.Size/2
+
+	return Vector3.new(clamp(boxMin.X, boxMax.X, position.X), 0, clamp(boxMin.Z, boxMax.Z, position.Z))
+end
 
 local function ScreenToWorldScale(distance)
 	local camera = workspace.CurrentCamera
@@ -226,66 +277,12 @@ local function CreateIsometricCamera()
 	local currentPanRoutine = nil
 	
 	
-	local function getMaxZoom(camera, boundingRegion)
-		if camera and boundingRegion then
-			local halfXWidth = boundingRegion.Size.X/2
-			local halfYHeight = boundingRegion.Size.Z/2
-			
-			local xd = halfXWidth / math.tan(math.rad(camera.FieldOfView) / 2)
-			local zd = halfYHeight / math.tan(math.rad(camera.FieldOfView) / 2)
-			
-			
-			
-			return math.min(xd, zd)
-		end
-	end
-	
-
-	local testCamera = Instance.new('Camera')
-	local function setFreeModeFocusPosition(position)
+	local function setFreeModeFocusPosition(position)	
+		--freeSubjectPosition = position
+		--local newFocus, newCFrame = module:CalculateCameraCFrame()
+		--position = constrainPointToFrustum(position, newFocus, newCFrame, regionBounds)
 		
-		freeSubjectPosition = position
-		local newFocus, newCFrame = module:CalculateCameraCFrame()
-
-		if newFocus and newCFrame then
-			local savedFocus = workspace.CurrentCamera.Focus
-			local savedCFrame = workspace.CurrentCamera.CoordinateFrame
-			workspace.CurrentCamera.Focus = newFocus
-			workspace.CurrentCamera.CoordinateFrame = newCFrame
-			
-			local pts = {FindFrustrumCornersOnPlane(workspace.CurrentCamera)}
-			workspace.CurrentCamera.Focus = savedFocus
-			workspace.CurrentCamera.CoordinateFrame = savedCFrame
-			if #pts > 0 then
-				local distanceFromEdges = {PointsToEdgeOfAABB(regionBounds, pts)}
-				if #distanceFromEdges > 0 then
-					--print(distanceFromEdges[1], distanceFromEdges[2], distanceFromEdges[3], distanceFromEdges[4])
-					if distanceFromEdges[1] > 0 then
-						position = position + Vector3.new(distanceFromEdges[1], 0, 0)
-						--print("Correcting left by:" , Vector3.new(distanceFromEdges[1], 0, 0))
-					end
-					if distanceFromEdges[2] > 0 then
-						position = position - Vector3.new(distanceFromEdges[2], 0, 0)
-						--print("Correcting right by:" , Vector3.new(distanceFromEdges[2], 0, 0))
-					end
-					if distanceFromEdges[3] > 0 then
-						position = position + Vector3.new(0, 0, distanceFromEdges[3])
-						--print("Correcting top by:" , Vector3.new(0, 0, distanceFromEdges[3]))
-					end
-					if distanceFromEdges[4] > 0 then
-						position = position - Vector3.new(0, 0, distanceFromEdges[4])
-						--print("Correcting down by:" , Vector3.new(0, 0, distanceFromEdges[4]))
-					end
-				end
-			else
-				print("Oh no")
-			end
-		else
-			print("Oh no")
-		end
-		
-		print("Position:" , position)
-		
+		position = constrainPointToAABB(position, regionBounds)
 		freeSubjectPosition = position
 	end
 
@@ -360,18 +357,19 @@ local function CreateIsometricCamera()
 		end
 	end
 	
+	--[[
 	local superSetCameraZoom = module.SetCameraZoom
 	function module:SetCameraZoom(zoom)
 		local currentCamera = workspace.CurrentCamera
 		local maxZoom = getMaxZoom(currentCamera, regionBounds)
 		if maxZoom then
-			print("MaxZoom:" , maxZoom)
 			zoom = math.min(zoom, maxZoom)
 		end
 		if zoom then
 			superSetCameraZoom(self, zoom)
 		end
 	end
+	--]]
 
 	local superGetSubjectPosition = module.GetSubjectPosition
 	function module:GetSubjectPosition()
@@ -500,6 +498,7 @@ local function CreateIsometricCamera()
 		end
 	end
 
+--[[
 	local part1 = Instance.new('Part')
 	part1.Anchored = true
 	part1.CanCollide = false
@@ -522,6 +521,7 @@ local function CreateIsometricCamera()
 	part4.Parent = workspace
 	--part4.Color = Color3.new(1,1,1)
 	local parts = {part1, part2, part3, part4}
+--]]
 
 	local lastUpdate = tick()
 	function module:Update()
@@ -539,7 +539,7 @@ local function CreateIsometricCamera()
 		
 		
 		
-		
+		--[[
 		if true then
 			local corners = {FindFrustrumCornersOnPlane()}
 			for i = 1, #corners do
@@ -558,6 +558,7 @@ local function CreateIsometricCamera()
 			parts[4].CFrame = CFrame.new((corners[3] + corners[4]) / 2 + Vector3.new(0,0,down) / 2)
 			parts[4].Size = Vector3.new(1,1,down)
 		end
+		--]]
 	end
 
 	return module
