@@ -139,9 +139,13 @@ local function CreateCamera()
 	function this:GetCameraZoom()
 		if this.currentZoom == nil then
 			local player = PlayersService.LocalPlayer
-			this.currentZoom = player and clamp(player.CameraMinZoomDistance, player.CameraMaxZoomDistance, 10) or 10
+			self:SetCameraZoom(player and clamp(player.CameraMinZoomDistance, player.CameraMaxZoomDistance, 10) or 10)
 		end
 		return this.currentZoom
+	end
+
+	function this:SetCameraZoom(zoom)
+		this.currentZoom = zoom
 	end
 
 	function this:GetCameraActualZoom()
@@ -220,9 +224,9 @@ local function CreateCamera()
 		local player = PlayersService.LocalPlayer
 		if player then
 			if player.CameraMode == Enum.CameraMode.LockFirstPerson then
-				this.currentZoom = 0
+				self:SetCameraZoom(0)
 			else
-				this.currentZoom = clamp(player.CameraMinZoomDistance, player.CameraMaxZoomDistance, desiredZoom)
+				self:SetCameraZoom(clamp(player.CameraMinZoomDistance, player.CameraMaxZoomDistance, desiredZoom))
 			end
 		end
 
