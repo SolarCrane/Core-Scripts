@@ -41,11 +41,16 @@ function RayPlaneIntersection(ray, planeNormal, planeDistanceFromOrigin)
 	return intersection
 end
 
+local function IsFinite(num)
+	return num == num and num ~= 1/0 and num ~= -1/0
+end
+
 
 local MAX_HISTORY_COUNT = 7
 local MAX_HISTORY_DURATION = 0.12
 local ZERO_VECTOR = Vector3.new(0,0,0)
 local UP_VECTOR = Vector3.new(0,1,0)
+local XZ_VECTOR = Vector3.new(1,0,1)
 
 local function CreateVelocityCalculator()
 	local this = {}
@@ -186,7 +191,6 @@ local function PointsToEdgeOfAABB(boundingRegion, pts)
 	
 	local boxMin = boundingRegion.CFrame.p - boundingRegion.Size/2
 	local boxMax = boundingRegion.CFrame.p + boundingRegion.Size/2
-	print("MinX" , minX)
 	return boxMin.X - minX, maxX - boxMax.X, boxMin.Z - minZ, maxZ - boxMax.Z
 end
 
@@ -197,9 +201,7 @@ local function getMaxZoom(camera, boundingRegion)
 		
 		local xd = halfXWidth / math.tan(math.rad(camera.FieldOfView) / 2)
 		local zd = halfYHeight / math.tan(math.rad(camera.FieldOfView) / 2)
-		
-		
-		
+
 		return math.min(xd, zd)
 	end
 end
@@ -269,6 +271,8 @@ local function CreateIsometricCamera()
 	local regionBounds = Region3.new(Vector3.new(-300, 0, -300), Vector3.new(300, 0, 300))
 	local freeSubjectPosition = Vector3.new()
 	local panSensitivity = 2.5
+	local mouseRotateSensitivity = 5
+	local touchRotateSensitivity = 1
 
 	local mode = "Free"
 
@@ -308,54 +312,10 @@ local function CreateIsometricCamera()
 		end
 	end
 
---[[ -- ROTATE CODE
-			self.TouchRotateConn = UserInputService.TouchRotate:connect(function(touchPositions, rotation, velocity, state, processed)
-				if self.RotateEnabled and not processed then
-					if #touchPositions == 2 then
-						if self.LastRotateValue == nil then
-							self.LastRotateValue = rotation
-						end
-						if self.LastRotateValue then
-							local deltaRotation = rotation - self.LastRotateValue
-							self.LastRotateValue = rotation
-
-							self.CameraYaw = self.CameraYaw + deltaRotation
-
-							-- update camera because we have moved the camera
-							self:FreePan()
-						end
-					end
-				end
-
-				if state == Enum.UserInputState.End then
-					self.LastRotateValue = nil
-				end
-			end)
-			--]]
 
 
-	local mouseDown = false
-	local lastPos = nil
-	local freshDelta = false
-	local function UpdateMouse(input, processed)
-		if mouseDown then
-			local position = input.Position
-			if lastPos then
-				local delta = freshDelta and input.Delta or Vector3.new()
-				local currPos = lastPos + delta
-				local ratio = ScreenToWorldScale()
-				if freshDelta then
-					local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * panSensitivity) * Vector3.new(1,0,1)
-					setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
-				end
-				velocityCalculator:AddMovementEvent(currPos, tick())
-				lastPos = currPos
-				freshDelta = false
-			else
-				lastPos = position
-			end
-		end
-	end
+
+
 	
 	--[[
 	local superSetCameraZoom = module.SetCameraZoom
@@ -414,9 +374,45 @@ local function CreateIsometricCamera()
 		currentPanRoutine = nil
 	end
 
-	local InputBeganConn, InputChangedConn, InputEndedConn = nil, nil, nil
+	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn = nil, nil, nil
 	local mouseTrackRoutine = nil
 	local superSetEnabled = module.SetEnabled
+	
+	local mouseButton1Down = false
+	local mouseButton2Down = false
+	local lastPos = nil
+	local freshDelta = false
+	
+	local function UpdateMouseMovement(input, processed)		
+		local position = input.Position
+		local currPos = position
+		local delta = ZERO_VECTOR
+		if lastPos then
+			if freshDelta then
+				delta = input.Delta
+			end
+			currPos = lastPos + delta
+			lastPos = currPos
+			freshDelta = false
+		else
+			lastPos = position
+		end
+		
+		if mouseButton2Down and not mouseButton1Down then
+			local ratio = ScreenToWorldScale()
+			if delta ~= ZERO_VECTOR then
+				local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * panSensitivity) * XZ_VECTOR
+				setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+			end
+			velocityCalculator:AddMovementEvent(currPos, tick())
+		elseif mouseButton2Down and mouseButton1Down then
+			local ratio = workspace.CurrentCamera and 1 / workspace.CurrentCamera.ViewportSize.X
+			if ratio and IsFinite(ratio) then
+				local deltaRotation = -delta.X * ratio * mouseRotateSensitivity
+				yaw = yaw + deltaRotation
+			end
+		end
+	end
 	function module:SetEnabled(newState)
 		local wasEnabled = self.Enabled
 		superSetEnabled(self, newState)
@@ -424,24 +420,30 @@ local function CreateIsometricCamera()
 		if newState ~= wasEnabled then
 			if self.Enabled then
 				InputBeganConn = UserInputService.InputBegan:connect(function(input, processed)
-					if input.UserInputType == Enum.UserInputType.MouseButton2 then
-						mouseDown = true
-						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-							UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+					if not processed then
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then
+							mouseButton1Down = true
+							velocityCalculator:Reset()
+							currentPanRoutine = nil
+						elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+							mouseButton2Down = true
+							if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+								UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+							end
+							velocityCalculator:Reset()
+							currentPanRoutine = nil
 						end
-						velocityCalculator:Reset()
-						currentPanRoutine = nil
 					end
 				end)
 				InputChangedConn = UserInputService.InputChanged:connect(function(input, processed)
 					if input.UserInputType == Enum.UserInputType.MouseMovement then
 						freshDelta = true
-						UpdateMouse(input, processed)
-						if mouseTrackRoutine == nil and mouseDown then
+						UpdateMouseMovement(input, processed)
+						if mouseTrackRoutine == nil and mouseButton2Down and not mouseButton1Down then
 							local routine = nil
 							routine = coroutine.create(function()
-								while mouseDown and routine and routine == mouseTrackRoutine do
-									UpdateMouse(input, processed)
+								while not mouseButton1Down and mouseButton2Down and routine and routine == mouseTrackRoutine do
+									UpdateMouseMovement(input, processed)
 									RunService.RenderStepped:wait()
 								end
 								if routine == mouseTrackRoutine then
@@ -454,8 +456,10 @@ local function CreateIsometricCamera()
 					end
 				end)
 				InputEndedConn = UserInputService.InputEnded:connect(function(input, processed)
-					if input.UserInputType == Enum.UserInputType.MouseButton2 then
-						mouseDown = false
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						mouseButton1Down = false
+					elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+						mouseButton2Down = false
 						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
 							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 						end
@@ -466,12 +470,35 @@ local function CreateIsometricCamera()
 						self:StartVelocityPan(velocity)
 					end
 				end)
+				
+				-- ROTATE CODE
+				local LastRotateValue = nil
+				TouchRotateConn = UserInputService.TouchRotate:connect(function(touchPositions, rotation, velocity, state, processed)
+					if self.RotateEnabled and not processed then
+						if #touchPositions == 2 then
+							if LastRotateValue then
+								local deltaRotation = rotation - LastRotateValue	
+								yaw = yaw + deltaRotation * touchRotateSensitivity
+	
+								-- update camera because we have moved the camera
+								--self:FreePan()
+							end
+							LastRotateValue = rotation
+						end
+					end
+	
+					if state == Enum.UserInputState.End then
+						LastRotateValue = nil
+					end
+				end)
 			else
 				if InputBeganConn then InputBeganConn:disconnect() InputBeganConn = nil end
 				if InputChangedConn then InputChangedConn:disconnect() InputChangedConn = nil end
 				lastPos = nil
 				if InputEndedConn then InputEndedConn:disconnect() InputEndedConn = nil end
-				mouseDown = false
+				if TouchRotateConn then TouchRotateConn:disconnect() TouchRotateConn = nil end
+				mouseButton1Down = false
+				mouseButton2Down = false
 				mouseTrackRoutine = false
 			end
 		end
