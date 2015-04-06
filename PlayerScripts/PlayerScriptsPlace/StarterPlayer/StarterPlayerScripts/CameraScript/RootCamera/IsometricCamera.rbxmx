@@ -248,9 +248,36 @@ local function ScreenToWorldScale(distance)
 	local camera = workspace.CurrentCamera
 	if camera then
 		distance = distance or (camera.CoordinateFrame.p - camera.Focus.p).magnitude
-		local aspectRatio = camera.ViewportSize.Y / camera.ViewportSize.X
-		local width = 2 * distance * math.tan(math.rad(camera.FieldOfView) / 2)
-		local height = aspectRatio * width
+		
+		local aspectRatio = camera.ViewportSize.X / camera.ViewportSize.Y
+		local height = 2 * distance * math.tan(math.rad(camera.FieldOfView) / 2)
+		local width = aspectRatio * height
+
+		return Vector2.new(width, height) / camera.ViewportSize
+	end
+	return Vector2.new(0,0)
+end
+
+local function ScreenToWorldScale2(distance)
+	local camera = workspace.CurrentCamera
+	if camera then		
+		local planeHeight = math.abs(camera.Focus.p.Y)
+		
+		local leftRay = camera:ViewportPointToRay(0, camera.ViewportSize.Y/2)
+		local rightRay = camera:ViewportPointToRay(camera.ViewportSize.X, camera.ViewportSize.Y/2)
+		local topRay = camera:ViewportPointToRay(camera.ViewportSize.X/2, 0)
+		local bottomRay = camera:ViewportPointToRay(camera.ViewportSize.X/2, camera.ViewportSize.Y)
+		
+		local lp = RayPlaneIntersection(leftRay, UP_VECTOR, planeHeight)
+		local rp = RayPlaneIntersection(rightRay, UP_VECTOR, planeHeight)
+		
+		
+		local tp = RayPlaneIntersection(topRay, UP_VECTOR, planeHeight)
+		local bp = RayPlaneIntersection(bottomRay, UP_VECTOR, planeHeight)
+		
+		
+		local width = (rp - lp).magnitude
+		local height = (tp - bp).magnitude
 		return Vector2.new(width, height) / camera.ViewportSize
 	end
 	return Vector2.new(0,0)
@@ -264,7 +291,10 @@ local function CreateIsometricCamera()
 	module.PanEnabled = true
 	module.KeyPanEnabled = true
 
+	module.RotateEnabled = true
+
 	local pitch = math.rad(-55)
+	--local pitch = math.rad(-80)
 	local roll = math.rad(0)
 	local yaw = math.rad(45)
 	
@@ -374,6 +404,16 @@ local function CreateIsometricCamera()
 		currentPanRoutine = nil
 	end
 
+	local function PanByScreenDelta(delta, sensitivity)
+		sensitivity = sensitivity or 1
+		local ratio = ScreenToWorldScale()
+		if delta ~= ZERO_VECTOR then
+			local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * sensitivity) * XZ_VECTOR
+			--print("Pan - 2d delta:" , delta , "3d delta:" , threeDDelta)
+			setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+		end
+	end
+
 	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn = nil, nil, nil
 	local mouseTrackRoutine = nil
 	local superSetEnabled = module.SetEnabled
@@ -397,13 +437,9 @@ local function CreateIsometricCamera()
 		else
 			lastPos = position
 		end
-		
+				
 		if mouseButton2Down and not mouseButton1Down then
-			local ratio = ScreenToWorldScale()
-			if delta ~= ZERO_VECTOR then
-				local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * panSensitivity) * XZ_VECTOR
-				setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
-			end
+			PanByScreenDelta(delta, panSensitivity)
 			velocityCalculator:AddMovementEvent(currPos, tick())
 		elseif mouseButton2Down and mouseButton1Down then
 			local ratio = workspace.CurrentCamera and 1 / workspace.CurrentCamera.ViewportSize.X
@@ -413,6 +449,64 @@ local function CreateIsometricCamera()
 			end
 		end
 	end
+	
+	local fingerTouches = {}
+	local NumUnsunkTouches = 0
+	local lastTouchPos = nil
+
+	local function OnTouchBegan(input, processed)
+		fingerTouches[input] = processed
+		if not processed then
+			NumUnsunkTouches = NumUnsunkTouches + 1
+			lastTouchPos = nil
+		end
+	end
+
+	local function OnTouchChanged(input, processed)
+		if fingerTouches[input] == nil then
+			fingerTouches[input] = processed
+			if not processed then
+				NumUnsunkTouches = NumUnsunkTouches + 1
+				lastTouchPos = nil
+			end
+		end
+
+		if NumUnsunkTouches >= 1 and NumUnsunkTouches < 4 then
+			local avgPos = Vector3.new()
+			for touch, wasSunk in pairs(fingerTouches) do
+				if not wasSunk then
+					avgPos = avgPos + touch.Position
+				end
+			end
+			avgPos = avgPos / NumUnsunkTouches
+			if lastTouchPos == nil then
+				velocityCalculator:Reset()
+			else
+				local delta = avgPos - lastTouchPos
+				PanByScreenDelta(delta)
+				velocityCalculator:AddMovementEvent(avgPos, tick())
+			end
+			lastTouchPos = avgPos
+		end
+	end
+
+	local function OnTouchEnded(input, processed)
+		if fingerTouches[input] == false then
+			lastTouchPos = nil
+		end
+
+		if fingerTouches[input] ~= nil and fingerTouches[input] == false then
+			NumUnsunkTouches = NumUnsunkTouches - 1
+			if NumUnsunkTouches == 0 then
+				local ratio = ScreenToWorldScale()
+				local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0)
+				module:StartVelocityPan(velocity)
+			end
+		end
+		fingerTouches[input] = nil
+	end
+	
+	
 	function module:SetEnabled(newState)
 		local wasEnabled = self.Enabled
 		superSetEnabled(self, newState)
@@ -434,6 +528,9 @@ local function CreateIsometricCamera()
 							currentPanRoutine = nil
 						end
 					end
+					if input.UserInputType == Enum.UserInputType.Touch then
+						OnTouchBegan(input, processed)
+					end
 				end)
 				InputChangedConn = UserInputService.InputChanged:connect(function(input, processed)
 					if input.UserInputType == Enum.UserInputType.MouseMovement then
@@ -453,6 +550,9 @@ local function CreateIsometricCamera()
 							mouseTrackRoutine = routine
 							coroutine.resume(routine)
 						end
+					elseif input.UserInputType == Enum.UserInputType.Touch then
+						freshDelta = true
+						OnTouchChanged(input, processed)
 					end
 				end)
 				InputEndedConn = UserInputService.InputEnded:connect(function(input, processed)
@@ -468,6 +568,8 @@ local function CreateIsometricCamera()
 						local ratio = ScreenToWorldScale()
 						local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0) * panSensitivity
 						self:StartVelocityPan(velocity)
+					elseif input.UserInputType == Enum.UserInputType.Touch then
+						OnTouchEnded(input, processed)
 					end
 				end)
 				
@@ -564,8 +666,8 @@ local function CreateIsometricCamera()
 
 		lastUpdate = now
 		
-		
-		
+		--ScreenToWorldScale()
+		--ScreenToWorldScale2()
 		--[[
 		if true then
 			local corners = {FindFrustrumCornersOnPlane()}
