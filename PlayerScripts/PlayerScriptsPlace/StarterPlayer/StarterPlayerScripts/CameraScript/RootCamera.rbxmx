@@ -241,8 +241,7 @@ local function CreateCamera()
 	local function rk4Integrator(position, velocity, t)
 		local direction = velocity < 0 and -1 or 1
 		local function acceleration(p, v)
-			local accel = direction * math.max(1, (p / 3.3) + 0.5)
-			return accel
+			return direction * math.max(1, (p / 3.3) + 0.5)
 		end
 
 		local p1 = position
@@ -260,14 +259,16 @@ local function CreateCamera()
 
 		local positionResult = position + (v1 + 2 * v2 + 2 * v3 + v4) * (t / 6)
 		local velocityResult = velocity + (a1 + 2 * a2 + 2 * a3 + a4) * (t / 6)
+		
 		return positionResult, velocityResult
 	end
 
-	function this:ZoomCameraBy(zoomScale)
+	function this:ZoomCameraBy(zoomScale, timeDelta)
+		timeDelta = timeDelta or 1
 		local zoom = this:GetCameraActualZoom()
 		if zoom then
 			-- Can break into more steps to get more accurate integration
-			zoom = rk4Integrator(zoom, zoomScale, 1)
+			zoom = rk4Integrator(zoom, zoomScale, timeDelta)
 			self:ZoomCamera(zoom)
 		end
 		return self:GetCameraZoom()

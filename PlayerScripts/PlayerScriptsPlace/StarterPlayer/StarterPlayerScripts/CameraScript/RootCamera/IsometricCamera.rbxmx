@@ -52,6 +52,8 @@ local ZERO_VECTOR = Vector3.new(0,0,0)
 local UP_VECTOR = Vector3.new(0,1,0)
 local XZ_VECTOR = Vector3.new(1,0,1)
 
+
+
 local function CreateVelocityCalculator()
 	local this = {}
 
@@ -130,6 +132,42 @@ local function dampen(amplitude, targetPosition, startTime, duration)
 	end
 	return position
 end
+
+-- K is a tunable parameter that changes the shape of the S-curve
+-- the larger K is the more straight/linear the curve gets
+local k = 0.35
+local lowerK = 0.8
+local function SCurveTranform(t)
+	t = clamp(-1,1,t)
+	if t >= 0 then
+		return (k*t) / (k - t + 1)
+	end
+	return -((lowerK*-t) / (lowerK + t + 1))
+end
+
+-- DEADZONE
+local DEADZONE = 0.1
+local function toSCurveSpace(t)
+	return (1 + DEADZONE) * (2*math.abs(t) - 1) - DEADZONE
+end
+
+local function fromSCurveSpace(t)
+	return t/2 + 0.5
+end
+
+local function gamepadLinearToCurve(thumbstickPosition)
+	local function onAxis(axisValue)
+		local sign = 1
+		if axisValue < 0 then
+			sign = -1
+		end
+		local point = fromSCurveSpace(SCurveTranform(toSCurveSpace(math.abs(axisValue))))
+		point = point * sign
+		return clamp(-1,1,point)
+	end
+	return Vector2.new(onAxis(thumbstickPosition.x), onAxis(thumbstickPosition.y))
+end
+
 
 local function FindFrustrumCornersOnPlaneCurrentCamera()
 	local currentCamera = workspace.CurrentCamera
@@ -303,6 +341,9 @@ local function CreateIsometricCamera()
 	local panSensitivity = 2.5
 	local mouseRotateSensitivity = 5
 	local touchRotateSensitivity = 1
+	local thumbstickSensitivity = 0.45
+	local thumbstickRotateSensitivity = 1.75
+	local thumbstickZoomSensitivity = 88
 
 	local mode = "Free"
 
@@ -414,7 +455,7 @@ local function CreateIsometricCamera()
 		end
 	end
 
-	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn = nil, nil, nil
+	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn, GamepadDisconnectedConn = nil, nil, nil, nil
 	local mouseTrackRoutine = nil
 	local superSetEnabled = module.SetEnabled
 	
@@ -422,6 +463,8 @@ local function CreateIsometricCamera()
 	local mouseButton2Down = false
 	local lastPos = nil
 	local freshDelta = false
+	local thumbstick1Position = Vector2.new(0,0)
+	local thumbstick2Position = Vector2.new(0,0)
 	
 	local function UpdateMouseMovement(input, processed)		
 		local position = input.Position
@@ -553,6 +596,12 @@ local function CreateIsometricCamera()
 					elseif input.UserInputType == Enum.UserInputType.Touch then
 						freshDelta = true
 						OnTouchChanged(input, processed)
+					elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
+						if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+							thumbstick1Position = Vector2.new(input.Position.X, input.Position.Y)
+						elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
+							thumbstick2Position = Vector2.new(input.Position.X, input.Position.Y)
+						end						
 					end
 				end)
 				InputEndedConn = UserInputService.InputEnded:connect(function(input, processed)
@@ -570,6 +619,12 @@ local function CreateIsometricCamera()
 						self:StartVelocityPan(velocity)
 					elseif input.UserInputType == Enum.UserInputType.Touch then
 						OnTouchEnded(input, processed)
+					elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
+						if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+							thumbstick1Position = Vector2.new(input.Position.X, input.Position.Y)
+						elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
+							thumbstick2Position = Vector2.new(input.Position.X, input.Position.Y)
+						end
 					end
 				end)
 				
@@ -593,15 +648,24 @@ local function CreateIsometricCamera()
 						LastRotateValue = nil
 					end
 				end)
+				GamepadDisconnectedConn = UserInputService.GamepadDisconnected:connect(function(gamepadNum)
+					if gamepadNum == Enum.UserInputType.Gamepad1 then
+						-- Don't keep panning if the gamepad is disconnected while the stick was rotated
+						thumbstick1Position = Vector2.new(0,0)
+						thumbstick2Position = Vector2.new(0,0)
+					end
+				end)
 			else
 				if InputBeganConn then InputBeganConn:disconnect() InputBeganConn = nil end
 				if InputChangedConn then InputChangedConn:disconnect() InputChangedConn = nil end
 				lastPos = nil
 				if InputEndedConn then InputEndedConn:disconnect() InputEndedConn = nil end
 				if TouchRotateConn then TouchRotateConn:disconnect() TouchRotateConn = nil end
+				if GamepadDisconnectedConn then GamepadDisconnectedConn:disconnect() GamepadDisconnectedConn = nil end
 				mouseButton1Down = false
 				mouseButton2Down = false
 				mouseTrackRoutine = false
+				thumbstick1Position = Vector2.new(0,0)
 			end
 		end
 	end
@@ -655,8 +719,28 @@ local function CreateIsometricCamera()
 	local lastUpdate = tick()
 	function module:Update()
 		local now = tick()
-
+		
+		
 		local camera = 	workspace.CurrentCamera
+
+		local timeDelta = now - lastUpdate		
+		local deltaFactor = math.min(0.5, timeDelta)
+		
+		if camera then
+			if thumbstick1Position ~= Vector2.new(0,0) then
+				PanByScreenDelta(Vector2.new(-1, 1) * gamepadLinearToCurve(thumbstick1Position) * deltaFactor * camera.ViewportSize, thumbstickSensitivity)
+			end
+			if thumbstick2Position ~= Vector2.new(0,0) then
+				if math.abs(thumbstick2Position.X) > math.abs(thumbstick2Position.Y) then
+					local deltaRotation = -gamepadLinearToCurve(thumbstick2Position).X * thumbstickRotateSensitivity * deltaFactor
+					yaw = yaw + deltaRotation
+				else
+					local zoomAmount = -gamepadLinearToCurve(thumbstick2Position).Y * thumbstickZoomSensitivity
+					self:ZoomCameraBy(zoomAmount, deltaFactor)
+				end
+			end
+		end
+
 		local newFocus, newCFrame = self:CalculateCameraCFrame()
 		if camera and newFocus and newCFrame then
 			camera.Focus = newFocus
