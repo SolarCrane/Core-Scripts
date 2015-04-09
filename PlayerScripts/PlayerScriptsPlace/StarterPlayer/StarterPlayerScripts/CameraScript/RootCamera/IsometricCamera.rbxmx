@@ -18,34 +18,6 @@ local MODES =
 }
 
 
--- http://www.siggraph.org/education/materials/HyperGraph/raytrace/rayplane_intersection.htm
-function RayPlaneIntersection(ray, planeNormal, planeDistanceFromOrigin)
-	-- if XZ-plane then planeNormal is always 0,1,0
-	planeNormal = planeNormal.unit
-	ray = ray.Unit
-	-- compute Pn (dot) Rd = Vd and check if Vd == 0 then we know ray is parallel to plane
-	local Vd = planeNormal:Dot(ray.Direction)
-
-	-- can increase this a little bit to account for imprecision or very close angles to zero
-	if Vd == 0 then -- parallel, no intersection
-		return nil
-	end
-
-	local V0 = -(planeNormal:Dot(ray.Origin) + planeDistanceFromOrigin)
-	local t = V0 / Vd
-	if t < 0 then --plane is behind ray origin, and thus there is no intersection
-		return nil
-	end
-
-	local intersection = ray.Origin + ray.Direction * t
-	return intersection
-end
-
-local function IsFinite(num)
-	return num == num and num ~= 1/0 and num ~= -1/0
-end
-
-
 local MAX_HISTORY_COUNT = 7
 local MAX_HISTORY_DURATION = 0.12
 local ZERO_VECTOR = Vector3.new(0,0,0)
@@ -115,6 +87,10 @@ local function CreateVelocityCalculator()
 	return this
 end
 
+local function IsFinite(num)
+	return num == num and num ~= 1/0 and num ~= -1/0
+end
+
 local function clamp(low, high, num)
 	if low <= high then
 		return math.min(high, math.max(low, num))
@@ -168,113 +144,6 @@ local function gamepadLinearToCurve(thumbstickPosition)
 	return Vector2.new(onAxis(thumbstickPosition.x), onAxis(thumbstickPosition.y))
 end
 
-
-local function FindFrustrumCornersOnPlaneCurrentCamera()
-	local currentCamera = workspace.CurrentCamera
-	local viewportSize = currentCamera and currentCamera.ViewportSize
-	if currentCamera and viewportSize then
-		local topLeftRay = currentCamera:ViewportPointToRay(0, 0, 0)
-		local topRightRay = currentCamera:ViewportPointToRay(viewportSize.X, 0, 0)
-		local bottomLeftRay = currentCamera:ViewportPointToRay(0, viewportSize.Y, 0)
-		local bottomRightRay = currentCamera:ViewportPointToRay(viewportSize.X, viewportSize.Y, 0)
-	end
-end
-
-local function FindFrustrumCornersOnPlane(camera)
-	local currentCamera = workspace.CurrentCamera
-	camera = camera or currentCamera
-	local viewportSize = currentCamera and currentCamera.ViewportSize
-	if camera and currentCamera and viewportSize then
-
-		local topLeftRay = currentCamera:ViewportPointToRay(0, 0, 0)
-		local topRightRay = currentCamera:ViewportPointToRay(viewportSize.X, 0, 0)
-		local bottomLeftRay = currentCamera:ViewportPointToRay(0, viewportSize.Y, 0)
-		local bottomRightRay = currentCamera:ViewportPointToRay(viewportSize.X, viewportSize.Y, 0)
-		
-		-- If we want to test corners against a different camera, we did to change
-		-- the vector space from world space relative to the currentCamera to
-		-- world space relative to the test camera
-		local transformPointSpaces = CFrame.Angles(0, math.rad(45), 0):inverse() --currentCamera.CoordinateFrame:inverse()--CFrame.new()
-		--if currentCamera ~= camera then
-		--	local transformPointSpaces = camera.CoordinateFrame * currentCamera.CoordinateFrame:inverse()
-		--end
-		
-		
-		local planeHeight = math.abs(camera.Focus.p.Y)
-		
-		local topLeftPt = transformPointSpaces * RayPlaneIntersection(topLeftRay, UP_VECTOR, planeHeight)
-		local topRightPt = transformPointSpaces * RayPlaneIntersection(topRightRay, UP_VECTOR, planeHeight)
-		local bottomLeftPt = transformPointSpaces * RayPlaneIntersection(bottomLeftRay, UP_VECTOR, planeHeight)
-		local bottomRightPt = transformPointSpaces * RayPlaneIntersection(bottomRightRay, UP_VECTOR, planeHeight)
-		
-		local centerPt = currentCamera.Focus.p
-		
-		return topLeftPt, topRightPt, bottomLeftPt, bottomRightPt
-	end
-end
-
-
-local function PointsToEdgeOfAABB(boundingRegion, pts)
-	local minX = math.huge
-	local maxX = -math.huge
-	local minZ = math.huge
-	local maxZ = -math.huge
-	
-	for _, pt in pairs(pts) do
-		minX = math.min(minX, pt.X)
-		maxX = math.max(maxX, pt.X)
-		minZ = math.min(minZ, pt.Z)
-		maxZ = math.max(maxZ, pt.Z)
-	end
-	
-	local boxMin = boundingRegion.CFrame.p - boundingRegion.Size/2
-	local boxMax = boundingRegion.CFrame.p + boundingRegion.Size/2
-	return boxMin.X - minX, maxX - boxMax.X, boxMin.Z - minZ, maxZ - boxMax.Z
-end
-
-local function getMaxZoom(camera, boundingRegion)
-	if camera and boundingRegion then
-		local halfXWidth = boundingRegion.Size.X/2
-		local halfYHeight = boundingRegion.Size.Z/2
-		
-		local xd = halfXWidth / math.tan(math.rad(camera.FieldOfView) / 2)
-		local zd = halfYHeight / math.tan(math.rad(camera.FieldOfView) / 2)
-
-		return math.min(xd, zd)
-	end
-end
-
-local function constrainPointToFrustum(position, newFocus, newCFrame, regionBounds)
-	if newFocus and newCFrame then
-		local savedFocus = workspace.CurrentCamera.Focus
-		local savedCFrame = workspace.CurrentCamera.CoordinateFrame
-		workspace.CurrentCamera.Focus = newFocus
-		workspace.CurrentCamera.CoordinateFrame = newCFrame
-		
-		local pts = {FindFrustrumCornersOnPlane(workspace.CurrentCamera)}
-		workspace.CurrentCamera.Focus = savedFocus
-		workspace.CurrentCamera.CoordinateFrame = savedCFrame
-		if #pts > 0 then
-			local distanceFromEdges = {PointsToEdgeOfAABB(regionBounds, pts)}
-			if #distanceFromEdges > 0 then
-				if distanceFromEdges[1] > 0 then
-					position = position + Vector3.new(distanceFromEdges[1], 0, 0)
-				end
-				if distanceFromEdges[2] > 0 then
-					position = position - Vector3.new(distanceFromEdges[2], 0, 0)
-				end
-				if distanceFromEdges[3] > 0 then
-					position = position + Vector3.new(0, 0, distanceFromEdges[3])
-				end
-				if distanceFromEdges[4] > 0 then
-					position = position - Vector3.new(0, 0, distanceFromEdges[4])
-				end
-			end
-		end
-	end
-	return position
-end
-
 local function constrainPointToAABB(position, boundingRegion)
 	local boxMin = boundingRegion.CFrame.p - boundingRegion.Size/2
 	local boxMax = boundingRegion.CFrame.p + boundingRegion.Size/2
@@ -296,31 +165,16 @@ local function ScreenToWorldScale(distance)
 	return Vector2.new(0,0)
 end
 
-local function ScreenToWorldScale2(distance)
+local function ScreenToViewport(screenPosition)
 	local camera = workspace.CurrentCamera
-	if camera then		
-		local planeHeight = math.abs(camera.Focus.p.Y)
-		
-		local leftRay = camera:ViewportPointToRay(0, camera.ViewportSize.Y/2)
-		local rightRay = camera:ViewportPointToRay(camera.ViewportSize.X, camera.ViewportSize.Y/2)
-		local topRay = camera:ViewportPointToRay(camera.ViewportSize.X/2, 0)
-		local bottomRay = camera:ViewportPointToRay(camera.ViewportSize.X/2, camera.ViewportSize.Y)
-		
-		local lp = RayPlaneIntersection(leftRay, UP_VECTOR, planeHeight)
-		local rp = RayPlaneIntersection(rightRay, UP_VECTOR, planeHeight)
-		
-		
-		local tp = RayPlaneIntersection(topRay, UP_VECTOR, planeHeight)
-		local bp = RayPlaneIntersection(bottomRay, UP_VECTOR, planeHeight)
-		
-		
-		local width = (rp - lp).magnitude
-		local height = (tp - bp).magnitude
-		return Vector2.new(width, height) / camera.ViewportSize
+	if camera then
+		local testWorldPt = camera.CoordinateFrame.p + camera.CoordinateFrame.lookVector
+		local testViewPt = camera:WorldToViewportPoint(testWorldPt)
+		local testScreenPt = camera:WorldToScreenPoint(testWorldPt)
+		local diff = testViewPt - testScreenPt
+		return screenPosition + diff
 	end
-	return Vector2.new(0,0)
 end
-
 
 local function CreateIsometricCamera()
 	local module = RootCameraCreator()
@@ -328,17 +182,16 @@ local function CreateIsometricCamera()
 	module.ZoomEnabled = true
 	module.PanEnabled = true
 	module.KeyPanEnabled = true
-
 	module.RotateEnabled = true
 
 	local pitch = math.rad(-55)
-	--local pitch = math.rad(-80)
 	local roll = math.rad(0)
 	local yaw = math.rad(45)
 	
 	local regionBounds = Region3.new(Vector3.new(-300, 0, -300), Vector3.new(300, 0, 300))
 	local freeSubjectPosition = Vector3.new()
 	local panSensitivity = 2.5
+	local edgePanSensitivity = 25
 	local mouseRotateSensitivity = 5
 	local touchRotateSensitivity = 1
 	local thumbstickSensitivity = 0.45
@@ -353,10 +206,6 @@ local function CreateIsometricCamera()
 	
 	
 	local function setFreeModeFocusPosition(position)	
-		--freeSubjectPosition = position
-		--local newFocus, newCFrame = module:CalculateCameraCFrame()
-		--position = constrainPointToFrustum(position, newFocus, newCFrame, regionBounds)
-		
 		position = constrainPointToAABB(position, regionBounds)
 		freeSubjectPosition = position
 	end
@@ -383,24 +232,6 @@ local function CreateIsometricCamera()
 		end
 	end
 
-
-
-
-
-	
-	--[[
-	local superSetCameraZoom = module.SetCameraZoom
-	function module:SetCameraZoom(zoom)
-		local currentCamera = workspace.CurrentCamera
-		local maxZoom = getMaxZoom(currentCamera, regionBounds)
-		if maxZoom then
-			zoom = math.min(zoom, maxZoom)
-		end
-		if zoom then
-			superSetCameraZoom(self, zoom)
-		end
-	end
-	--]]
 
 	local superGetSubjectPosition = module.GetSubjectPosition
 	function module:GetSubjectPosition()
@@ -450,18 +281,19 @@ local function CreateIsometricCamera()
 		local ratio = ScreenToWorldScale()
 		if delta ~= ZERO_VECTOR then
 			local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * sensitivity) * XZ_VECTOR
-			--print("Pan - 2d delta:" , delta , "3d delta:" , threeDDelta)
 			setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
 		end
 	end
 
-	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn, GamepadDisconnectedConn = nil, nil, nil, nil
+	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn, GamepadDisconnectedConn = nil, nil, nil, nil, nil
 	local mouseTrackRoutine = nil
 	local superSetEnabled = module.SetEnabled
 	
 	local mouseButton1Down = false
 	local mouseButton2Down = false
-	local lastPos = nil
+	local lastPanMousePosition = nil
+	local lastMousePosition = nil
+	local mouseMovementInputObject = nil
 	local freshDelta = false
 	local thumbstick1Position = Vector2.new(0,0)
 	local thumbstick2Position = Vector2.new(0,0)
@@ -470,25 +302,29 @@ local function CreateIsometricCamera()
 		local position = input.Position
 		local currPos = position
 		local delta = ZERO_VECTOR
-		if lastPos then
+		if lastPanMousePosition then
 			if freshDelta then
 				delta = input.Delta
 			end
-			currPos = lastPos + delta
-			lastPos = currPos
+			currPos = lastPanMousePosition + delta
+			lastPanMousePosition = currPos
 			freshDelta = false
 		else
-			lastPos = position
+			lastPanMousePosition = position
 		end
 				
 		if mouseButton2Down and not mouseButton1Down then
-			PanByScreenDelta(delta, panSensitivity)
-			velocityCalculator:AddMovementEvent(currPos, tick())
+			if module.PanEnabled then
+				PanByScreenDelta(delta, panSensitivity)
+				velocityCalculator:AddMovementEvent(currPos, tick())
+			end
 		elseif mouseButton2Down and mouseButton1Down then
-			local ratio = workspace.CurrentCamera and 1 / workspace.CurrentCamera.ViewportSize.X
-			if ratio and IsFinite(ratio) then
-				local deltaRotation = -delta.X * ratio * mouseRotateSensitivity
-				yaw = yaw + deltaRotation
+			if module.RotateEnabled then
+				local ratio = workspace.CurrentCamera and 1 / workspace.CurrentCamera.ViewportSize.X
+				if ratio and IsFinite(ratio) then
+					local deltaRotation = -delta.X * ratio * mouseRotateSensitivity
+					yaw = yaw + deltaRotation
+				end
 			end
 		end
 	end
@@ -522,12 +358,14 @@ local function CreateIsometricCamera()
 				end
 			end
 			avgPos = avgPos / NumUnsunkTouches
-			if lastTouchPos == nil then
-				velocityCalculator:Reset()
-			else
-				local delta = avgPos - lastTouchPos
-				PanByScreenDelta(delta)
-				velocityCalculator:AddMovementEvent(avgPos, tick())
+			if module.PanEnabled then
+				if lastTouchPos == nil then
+					velocityCalculator:Reset()
+				else
+					local delta = avgPos - lastTouchPos
+					PanByScreenDelta(delta)
+					velocityCalculator:AddMovementEvent(avgPos, tick())
+				end
 			end
 			lastTouchPos = avgPos
 		end
@@ -541,9 +379,11 @@ local function CreateIsometricCamera()
 		if fingerTouches[input] ~= nil and fingerTouches[input] == false then
 			NumUnsunkTouches = NumUnsunkTouches - 1
 			if NumUnsunkTouches == 0 then
-				local ratio = ScreenToWorldScale()
-				local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0)
-				module:StartVelocityPan(velocity)
+				if module.PanEnabled then
+					local ratio = ScreenToWorldScale()
+					local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0)
+					module:StartVelocityPan(velocity)
+				end
 			end
 		end
 		fingerTouches[input] = nil
@@ -564,8 +404,10 @@ local function CreateIsometricCamera()
 							currentPanRoutine = nil
 						elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 							mouseButton2Down = true
-							if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-								UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+							if module.PanEnabled then
+								if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+									UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+								end
 							end
 							velocityCalculator:Reset()
 							currentPanRoutine = nil
@@ -578,21 +420,8 @@ local function CreateIsometricCamera()
 				InputChangedConn = UserInputService.InputChanged:connect(function(input, processed)
 					if input.UserInputType == Enum.UserInputType.MouseMovement then
 						freshDelta = true
+						mouseMovementInputObject = input
 						UpdateMouseMovement(input, processed)
-						if mouseTrackRoutine == nil and mouseButton2Down and not mouseButton1Down then
-							local routine = nil
-							routine = coroutine.create(function()
-								while not mouseButton1Down and mouseButton2Down and routine and routine == mouseTrackRoutine do
-									UpdateMouseMovement(input, processed)
-									RunService.RenderStepped:wait()
-								end
-								if routine == mouseTrackRoutine then
-									mouseTrackRoutine = nil
-								end
-							end)
-							mouseTrackRoutine = routine
-							coroutine.resume(routine)
-						end
 					elseif input.UserInputType == Enum.UserInputType.Touch then
 						freshDelta = true
 						OnTouchChanged(input, processed)
@@ -612,11 +441,12 @@ local function CreateIsometricCamera()
 						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
 							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 						end
-						lastPos = nil
-						
-						local ratio = ScreenToWorldScale()
-						local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0) * panSensitivity
-						self:StartVelocityPan(velocity)
+						lastPanMousePosition = nil
+						if  module.PanEnabled then
+							local ratio = ScreenToWorldScale()
+							local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0) * panSensitivity
+							self:StartVelocityPan(velocity)
+						end
 					elseif input.UserInputType == Enum.UserInputType.Touch then
 						OnTouchEnded(input, processed)
 					elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
@@ -633,12 +463,11 @@ local function CreateIsometricCamera()
 				TouchRotateConn = UserInputService.TouchRotate:connect(function(touchPositions, rotation, velocity, state, processed)
 					if self.RotateEnabled and not processed then
 						if #touchPositions == 2 then
-							if LastRotateValue then
-								local deltaRotation = rotation - LastRotateValue	
-								yaw = yaw + deltaRotation * touchRotateSensitivity
-	
-								-- update camera because we have moved the camera
-								--self:FreePan()
+							if module.RotateEnabled then
+								if LastRotateValue then
+									local deltaRotation = rotation - LastRotateValue	
+									yaw = yaw + deltaRotation * touchRotateSensitivity
+								end
 							end
 							LastRotateValue = rotation
 						end
@@ -658,13 +487,15 @@ local function CreateIsometricCamera()
 			else
 				if InputBeganConn then InputBeganConn:disconnect() InputBeganConn = nil end
 				if InputChangedConn then InputChangedConn:disconnect() InputChangedConn = nil end
-				lastPos = nil
+				lastPanMousePosition = nil
+				lastMousePosition = nil
 				if InputEndedConn then InputEndedConn:disconnect() InputEndedConn = nil end
 				if TouchRotateConn then TouchRotateConn:disconnect() TouchRotateConn = nil end
 				if GamepadDisconnectedConn then GamepadDisconnectedConn:disconnect() GamepadDisconnectedConn = nil end
 				mouseButton1Down = false
 				mouseButton2Down = false
 				mouseTrackRoutine = false
+				mouseMovementInputObject = nil
 				thumbstick1Position = Vector2.new(0,0)
 			end
 		end
@@ -691,54 +522,56 @@ local function CreateIsometricCamera()
 		end
 	end
 
---[[
-	local part1 = Instance.new('Part')
-	part1.Anchored = true
-	part1.CanCollide = false
-	part1.TopSurface = 'Smooth'
-	part1.BottomSurface = 'Smooth'
-	part1.FormFactor = 'Custom'
-	part1.Size = Vector3.new(1,1,1)
-	--part1.Color = Color3.new(1,0,0)
-	part1.Parent = workspace
-	local selBox = Instance.new('SelectionBox')
-	selBox.Adornee = part1
-	selBox.Parent = part1
-	local part2 = part1:Clone()
-	part2.Parent = workspace
-	--part2.Color = Color3.new(0,1,0)
-	local part3 = part1:Clone()
-	part3.Parent = workspace
-	--part3.Color = Color3.new(0,0,1)
-	local part4 = part1:Clone()
-	part4.Parent = workspace
-	--part4.Color = Color3.new(1,1,1)
-	local parts = {part1, part2, part3, part4}
---]]
-
+	local PlayerMouse = nil
 	local lastUpdate = tick()
 	function module:Update()
 		local now = tick()
-		
-		
+				
 		local camera = 	workspace.CurrentCamera
-
 		local timeDelta = now - lastUpdate		
 		local deltaFactor = math.min(0.5, timeDelta)
 		
 		if camera then
-			if thumbstick1Position ~= Vector2.new(0,0) then
-				PanByScreenDelta(Vector2.new(-1, 1) * gamepadLinearToCurve(thumbstick1Position) * deltaFactor * camera.ViewportSize, thumbstickSensitivity)
+			if module.PanEnabled then
+				if thumbstick1Position ~= Vector2.new(0,0) then
+					PanByScreenDelta(Vector2.new(-1, 1) * gamepadLinearToCurve(thumbstick1Position) * deltaFactor * camera.ViewportSize, thumbstickSensitivity)
+				end
 			end
 			if thumbstick2Position ~= Vector2.new(0,0) then
-				if math.abs(thumbstick2Position.X) > math.abs(thumbstick2Position.Y) then
+				if math.abs(thumbstick2Position.X) > math.abs(thumbstick2Position.Y) and module.RotateEnabled then
 					local deltaRotation = -gamepadLinearToCurve(thumbstick2Position).X * thumbstickRotateSensitivity * deltaFactor
 					yaw = yaw + deltaRotation
-				else
+				elseif module.ZoomEnabled then
 					local zoomAmount = -gamepadLinearToCurve(thumbstick2Position).Y * thumbstickZoomSensitivity
 					self:ZoomCameraBy(zoomAmount, deltaFactor)
 				end
 			end
+		end
+		
+		if module.PanEnabled then
+			local mouseInputPos = mouseMovementInputObject and mouseMovementInputObject.Position
+			if mouseInputPos and camera then
+				local deltaX, deltaY = 0, 0
+				local viewportMousePos = ScreenToViewport(mouseInputPos)
+				if viewportMousePos then
+					if viewportMousePos.X < 7 then
+						deltaX = 1
+					elseif viewportMousePos.X > camera.ViewportSize.X - 7 then
+						deltaX = -1
+					end
+					if viewportMousePos.Y < 7 then
+						deltaY = 1
+					elseif viewportMousePos.Y > camera.ViewportSize.Y - 7 then
+						deltaY = -1
+					end
+					PanByScreenDelta(Vector2.new(deltaX, deltaY) * 30 * deltaFactor * edgePanSensitivity)
+				end
+			end
+		end
+		
+		if mouseMovementInputObject and not mouseButton1Down and mouseButton2Down then
+			-- NOTE: This is so we can sample mouse movements every frame, not just when they are fired
+			UpdateMouseMovement(mouseMovementInputObject, false)
 		end
 
 		local newFocus, newCFrame = self:CalculateCameraCFrame()
@@ -749,29 +582,6 @@ local function CreateIsometricCamera()
 		end
 
 		lastUpdate = now
-		
-		--ScreenToWorldScale()
-		--ScreenToWorldScale2()
-		--[[
-		if true then
-			local corners = {FindFrustrumCornersOnPlane()}
-			for i = 1, #corners do
-				if parts[i] then
-					parts[i].CFrame = CFrame.new(corners[i])
-					--parts[i].SelectionBox.Color = parts[i].Color
-				end
-			end
-			local left, right, top, down = PointsToEdgeOfAABB(regionBounds, corners)
-			parts[1].CFrame = CFrame.new((corners[1] + corners[3]) / 2 + Vector3.new(left,0,0) / 2)
-			parts[1].Size = Vector3.new(left,1,1)
-			parts[2].CFrame = CFrame.new((corners[2] + corners[4]) / 2 + Vector3.new(right,0,0) / 2)
-			parts[2].Size = Vector3.new(right,1,1)
-			parts[3].CFrame = CFrame.new((corners[1] + corners[2]) / 2 + Vector3.new(0,0,top) / 2)
-			parts[3].Size = Vector3.new(1,1,top)
-			parts[4].CFrame = CFrame.new((corners[3] + corners[4]) / 2 + Vector3.new(0,0,down) / 2)
-			parts[4].Size = Vector3.new(1,1,down)
-		end
-		--]]
 	end
 
 	return module
