@@ -181,8 +181,10 @@ local function CreateIsometricCamera()
 
 	module.ZoomEnabled = true
 	module.PanEnabled = true
-	module.KeyPanEnabled = true
 	module.RotateEnabled = true
+	
+	local useEdgeBumpPanning = true
+	local mousePanInputType = Enum.UserInputType.MouseButton2 -- Enum.UserInputType.MouseButton1
 
 	local pitch = math.rad(-55)
 	local roll = math.rad(0)
@@ -231,7 +233,6 @@ local function CreateIsometricCamera()
 			end
 		end
 	end
-
 
 	local superGetSubjectPosition = module.GetSubjectPosition
 	function module:GetSubjectPosition()
@@ -287,12 +288,10 @@ local function CreateIsometricCamera()
 
 	local InputBeganConn, InputChangedConn, InputEndedConn, TouchRotateConn, GamepadDisconnectedConn = nil, nil, nil, nil, nil
 	local mouseTrackRoutine = nil
-	local superSetEnabled = module.SetEnabled
 	
 	local mouseButton1Down = false
 	local mouseButton2Down = false
 	local lastPanMousePosition = nil
-	local lastMousePosition = nil
 	local mouseMovementInputObject = nil
 	local freshDelta = false
 	local thumbstick1Position = Vector2.new(0,0)
@@ -313,18 +312,20 @@ local function CreateIsometricCamera()
 			lastPanMousePosition = position
 		end
 				
-		if mouseButton2Down and not mouseButton1Down then
-			if module.PanEnabled then
-				PanByScreenDelta(delta, panSensitivity)
-				velocityCalculator:AddMovementEvent(currPos, tick())
-			end
-		elseif mouseButton2Down and mouseButton1Down then
+		
+		if mouseButton1Down and mouseButton2Down then
 			if module.RotateEnabled then
 				local ratio = workspace.CurrentCamera and 1 / workspace.CurrentCamera.ViewportSize.X
 				if ratio and IsFinite(ratio) then
 					local deltaRotation = -delta.X * ratio * mouseRotateSensitivity
 					yaw = yaw + deltaRotation
 				end
+			end
+		elseif (mousePanInputType == Enum.UserInputType.MouseButton2 and mouseButton2Down) or
+				(mousePanInputType == Enum.UserInputType.MouseButton1 and mouseButton1Down) then
+			if module.PanEnabled then
+				PanByScreenDelta(delta, panSensitivity)
+				velocityCalculator:AddMovementEvent(currPos, tick())
 			end
 		end
 	end
@@ -389,7 +390,7 @@ local function CreateIsometricCamera()
 		fingerTouches[input] = nil
 	end
 	
-	
+	local superSetEnabled = module.SetEnabled
 	function module:SetEnabled(newState)
 		local wasEnabled = self.Enabled
 		superSetEnabled(self, newState)
@@ -404,13 +405,15 @@ local function CreateIsometricCamera()
 							currentPanRoutine = nil
 						elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 							mouseButton2Down = true
-							if module.PanEnabled then
+							velocityCalculator:Reset()
+							currentPanRoutine = nil
+						end
+						if module.PanEnabled then
+							if input.UserInputType == mousePanInputType then
 								if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
 									UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
 								end
 							end
-							velocityCalculator:Reset()
-							currentPanRoutine = nil
 						end
 					end
 					if input.UserInputType == Enum.UserInputType.Touch then
@@ -438,15 +441,6 @@ local function CreateIsometricCamera()
 						mouseButton1Down = false
 					elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 						mouseButton2Down = false
-						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-						end
-						lastPanMousePosition = nil
-						if  module.PanEnabled then
-							local ratio = ScreenToWorldScale()
-							local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0) * panSensitivity
-							self:StartVelocityPan(velocity)
-						end
 					elseif input.UserInputType == Enum.UserInputType.Touch then
 						OnTouchEnded(input, processed)
 					elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
@@ -454,6 +448,18 @@ local function CreateIsometricCamera()
 							thumbstick1Position = Vector2.new(input.Position.X, input.Position.Y)
 						elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
 							thumbstick2Position = Vector2.new(input.Position.X, input.Position.Y)
+						end
+					end
+					
+					if input.UserInputType == mousePanInputType then
+						if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+							UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+						end
+						lastPanMousePosition = nil
+						if module.PanEnabled then
+							local ratio = ScreenToWorldScale()
+							local velocity = velocityCalculator:CalculateVelocity() * Vector3.new(ratio.X, ratio.Y, 0) * panSensitivity
+							self:StartVelocityPan(velocity)
 						end
 					end
 				end)
@@ -487,16 +493,17 @@ local function CreateIsometricCamera()
 			else
 				if InputBeganConn then InputBeganConn:disconnect() InputBeganConn = nil end
 				if InputChangedConn then InputChangedConn:disconnect() InputChangedConn = nil end
-				lastPanMousePosition = nil
-				lastMousePosition = nil
 				if InputEndedConn then InputEndedConn:disconnect() InputEndedConn = nil end
 				if TouchRotateConn then TouchRotateConn:disconnect() TouchRotateConn = nil end
 				if GamepadDisconnectedConn then GamepadDisconnectedConn:disconnect() GamepadDisconnectedConn = nil end
 				mouseButton1Down = false
 				mouseButton2Down = false
+				freshDelta = false
 				mouseTrackRoutine = false
 				mouseMovementInputObject = nil
+				lastPanMousePosition = nil
 				thumbstick1Position = Vector2.new(0,0)
+				thumbstick2Position = Vector2.new(0,0)
 			end
 		end
 	end
@@ -522,7 +529,6 @@ local function CreateIsometricCamera()
 		end
 	end
 
-	local PlayerMouse = nil
 	local lastUpdate = tick()
 	function module:Update()
 		local now = tick()
@@ -538,7 +544,7 @@ local function CreateIsometricCamera()
 				end
 			end
 			if thumbstick2Position ~= Vector2.new(0,0) then
-				if math.abs(thumbstick2Position.X) > math.abs(thumbstick2Position.Y) and module.RotateEnabled then
+				if module.RotateEnabled and math.abs(thumbstick2Position.X) > math.abs(thumbstick2Position.Y) then
 					local deltaRotation = -gamepadLinearToCurve(thumbstick2Position).X * thumbstickRotateSensitivity * deltaFactor
 					yaw = yaw + deltaRotation
 				elseif module.ZoomEnabled then
@@ -548,7 +554,7 @@ local function CreateIsometricCamera()
 			end
 		end
 		
-		if module.PanEnabled then
+		if module.PanEnabled and useEdgeBumpPanning then
 			local mouseInputPos = mouseMovementInputObject and mouseMovementInputObject.Position
 			if mouseInputPos and camera then
 				local deltaX, deltaY = 0, 0
@@ -569,9 +575,12 @@ local function CreateIsometricCamera()
 			end
 		end
 		
-		if mouseMovementInputObject and not mouseButton1Down and mouseButton2Down then
-			-- NOTE: This is so we can sample mouse movements every frame, not just when they are fired
-			UpdateMouseMovement(mouseMovementInputObject, false)
+		if mouseMovementInputObject and not (mouseButton1Down and mouseButton2Down) then
+			if (mousePanInputType == Enum.UserInputType.MouseButton2 and mouseButton2Down) or
+				(mousePanInputType == Enum.UserInputType.MouseButton1 and mouseButton1Down) then
+					-- NOTE: This is so we can sample mouse movements every frame, not just when they are fired
+					UpdateMouseMovement(mouseMovementInputObject, false)
+			end
 		end
 
 		local newFocus, newCFrame = self:CalculateCameraCFrame()
