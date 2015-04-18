@@ -260,7 +260,10 @@ local function CreateIsometricCamera()
 				currPosition = newPosition
 
 				local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X, 0, delta.Y)) * Vector3.new(1,0,1)
-				setFreeModeFocusPosition(self:GetSubjectPosition() - threeDDelta)
+				local subjectPosition = module:GetSubjectPosition()
+				if subjectPosition then
+					setFreeModeFocusPosition(subjectPosition - threeDDelta)
+				end
 				
 				RunService.RenderStepped:wait()
 			end
@@ -280,9 +283,10 @@ local function CreateIsometricCamera()
 	local function PanByScreenDelta(delta, sensitivity)
 		sensitivity = sensitivity or 1
 		local ratio = ScreenToWorldScale()
-		if delta ~= ZERO_VECTOR then
+		local subjectPosition = module:GetSubjectPosition()
+		if delta ~= ZERO_VECTOR and subjectPosition then
 			local threeDDelta = CFrame.Angles(0, yaw, 0):vectorToWorldSpace(Vector3.new(delta.X * ratio.X, 0, delta.Y * ratio.Y) * sensitivity) * XZ_VECTOR
-			setFreeModeFocusPosition(module:GetSubjectPosition() - threeDDelta)
+			setFreeModeFocusPosition(subjectPosition - threeDDelta)
 		end
 	end
 
