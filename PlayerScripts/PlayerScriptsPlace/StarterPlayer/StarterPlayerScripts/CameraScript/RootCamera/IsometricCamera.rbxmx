@@ -341,6 +341,7 @@ local function CreateIsometricCamera()
 	local function OnTouchBegan(input, processed)
 		fingerTouches[input] = processed
 		if not processed then
+			velocityCalculator:AddMovementEvent(input.Position, tick())
 			NumUnsunkTouches = NumUnsunkTouches + 1
 			lastTouchPos = nil
 		end
