@@ -347,7 +347,7 @@ local function MakeButton(name, text, size, clickFunc, pageRef, hubRef)
 			local lastInputType = nil
 			pcall(function() lastInputType = UserInputService:GetLastInputType() end)
 			if lastInputType then
-				clickFunc(lastInputTypee == Enum.UserInputType.Gamepad1 or lastInputType == Enum.UserInputType.Gamepad2 or 
+				clickFunc(lastInputType == Enum.UserInputType.Gamepad1 or lastInputType == Enum.UserInputType.Gamepad2 or 
 					lastInputType == Enum.UserInputType.Gamepad3 or lastInputType == Enum.UserInputType.Gamepad4)
 			else
 				clickFunc(false)
