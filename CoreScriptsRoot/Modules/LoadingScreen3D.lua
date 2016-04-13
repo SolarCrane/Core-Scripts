@@ -1,12 +1,16 @@
 -- LoadingScreen3D.lua --
 -- Written by Kip Turner, copyright ROBLOX 2016 --
 
+
 local GUI_DISTANCE_FROM_CAMERA = 6
 local VERTICAL_SCREEN_PERCENT = 1/3
 local HORIZONTAL_SCREEN_PERCENT = 1/3
 local SECOND_TO_FADE = 2.5
 local ROTATIONS_PER_SECOND = 0.5
 local TEXT_SCROLL_SPEED = 25
+
+local BACKGROUND_COLOR3 = Color3.new(1,1,1)
+local TEXT_COLOR3 = Color3.new(0,0,0)
 
 local CoreGui = game:GetService('CoreGui')
 local RunService = game:GetService('RunService')
@@ -88,6 +92,7 @@ end
 
 local LoadingScreen = {}
 
+local renderStepGUID = game:GetService("HttpService"):GenerateGUID() .. "LoadingGui3D"
 
 local surfaceGuiAdorn = Util:Create'Part'
 {
@@ -109,41 +114,50 @@ local loadingSurfaceGui = Util:Create'SurfaceGui'
 	CanvasSize = Vector2.new(500, 500);
 	Archivable = false;
 	Parent = CoreGui;
+	-- Parent = surfaceGuiAdorn;
 }
 
-local backgroundImage = Util:Create'ImageLabel'
-{
-	Name = 'LoadingBackground';
-	Size = UDim2.new(1,0,1,0);
-	Image = 'rbxasset://textures/ui/LoadingScreen/BackgroundLight.png';
-	ScaleType = Enum.ScaleType.Slice;
-	SliceCenter = Rect.new(70,70,110,110);
-	BackgroundTransparency = 1;
-	Parent = loadingSurfaceGui;
-}
+
+local function CreateInformationFrame(titleText, imageTexture)
+	local container = Util:Create'ImageLabel'
+	{
+		Name = 'Background';
+		Size = UDim2.new(1,0,1,0);
+		Image = 'rbxasset://textures/ui/LoadingScreen/BackgroundLight.png';
+		ImageColor3 = BACKGROUND_COLOR3;
+		ScaleType = Enum.ScaleType.Slice;
+		SliceCenter = Rect.new(70,70,110,110);
+		BackgroundTransparency = 1;
+		Parent = loadingSurfaceGui;
+	}
+
+	local title = Util:Create'TextLabel'
+	{
+		Name = 'TitleText';
+		Text = titleText;
+		BackgroundTransparency = 1;
+		Font = Enum.Font.SourceSans;
+		FontSize = Enum.FontSize.Size60;
+		Position = UDim2.new(0.5,0,0.2,0);
+		TextColor3 = TEXT_COLOR3;
+		Parent = container;
+	}
+
+	local image = Util:Create'ImageLabel'
+	{
+		Name = 'Image';
+		Size = UDim2.new(0.25,0,0.25,0);
+		Position = UDim2.new(0.5 - (0.25/2), 0, 0.45 - (0.25/2), 0);
+		Image = imageTexture;
+		BackgroundTransparency = 1;
+		Parent = container;
+	}
+	return container, title, image
+end
 
 local spinnerRotation = 0
-local spinnerImage = Util:Create'ImageLabel'
-{
-	Name = 'Spinner';
-	Size = UDim2.new(0.25,0,0.25,0);
-	Position = UDim2.new(0.5 - (0.25/2), 0, 0.45 - (0.25/2), 0);
-	Image = 'rbxasset://textures/ui/LoadingScreen/LoadingSpinner.png';
-	BackgroundTransparency = 1;
-	Parent = backgroundImage;
-}
-
-
-local loadingText = Util:Create'TextLabel'
-{
-	Name = 'LoadingText';
-	Text = 'Loading...';
-	BackgroundTransparency = 1;
-	Font = Enum.Font.SourceSans;
-	FontSize = Enum.FontSize.Size60;
-	Position = UDim2.new(0.5,0,0.2,0);
-	Parent = backgroundImage;
-}
+----------- LOADING FRAME -----------
+local loadingContainer, loadingText, spinnerImage = CreateInformationFrame('Loading...', 'rbxasset://textures/ui/LoadingScreen/LoadingSpinner.png')
 
 local gameNameText = Util:Create'TextLabel'
 {
@@ -154,8 +168,9 @@ local gameNameText = Util:Create'TextLabel'
 	FontSize = Enum.FontSize.Size60;
 	Size = UDim2.new(0.9, 0, 0.1, 0);
 	Position = UDim2.new(0.05,0,0.65,0);
+	TextColor3 = TEXT_COLOR3;
 	ClipsDescendants = true;
-	Parent = backgroundImage;
+	Parent = loadingContainer;
 }
 
 
@@ -166,7 +181,7 @@ local creatorTextContainer = Util:Create'Frame'
 	Position = UDim2.new(0.05,0,0.77,0);
 	BackgroundTransparency = 1;
 	ClipsDescendants = true;
-	Parent = backgroundImage;
+	Parent = loadingContainer;
 }
 
 local creatorTextPosition = 0
@@ -178,9 +193,34 @@ local creatorText = Util:Create'TextLabel'
 	Font = Enum.Font.SourceSans;
 	FontSize = Enum.FontSize.Size42;
 	Size = UDim2.new(1, 0, 1, 0);
+	TextColor3 = TEXT_COLOR3;
 	Parent = creatorTextContainer;
 }
+----------- END LOADING FRAME -----------
 
+----------- ERROR FRAME -----------
+local errorContainer, errorText, errorImage = CreateInformationFrame('Error', 'rbxasset://textures/ui/ErrorIconSmall.png')
+errorContainer.Visible = false
+
+local errorDescriptionText = Util:Create'TextLabel'
+{
+	Name = 'ErrorDescriptionText';
+	Text = '';
+	BackgroundTransparency = 1;
+	Font = Enum.Font.SourceSans;
+	FontSize = Enum.FontSize.Size42;
+	TextColor3 = TEXT_COLOR3;
+	Position = UDim2.new(0,0,0.7,0);
+	Size = UDim2.new(1, 0, 0.3, 0);
+	TextWrapped = true;
+	Parent = errorContainer;
+}
+----------- END ERROR FRAME -----------
+
+----------- TELEPORT FRAME -----------
+local teleportContainer, teleportText, teleportImage = CreateInformationFrame('Teleporting...', 'rbxasset://textures/ui/LoadingScreen/LoadingSpinner.png')
+teleportContainer.Visible = false
+----------- END TELEPORT FRAME -----------
 
 local function ScreenDimsAtDepth(depth)
 	local camera = workspace.CurrentCamera
@@ -251,7 +291,7 @@ local function CleanUp()
 	if CleanedUp then return end
 	CleanedUp = true
 	surfaceGuiAdorn.Parent = nil
-	RunService:UnbindFromRenderStep("LoadingGui3D")
+	RunService:UnbindFromRenderStep(renderStepGUID)
 end
 
 local function OnGameInfoLoaded()
@@ -294,9 +334,31 @@ local function UpdateSurfaceGuiPosition()
 	end
 end
 
+local function OnErrorMessage(newMsg)
+	errorDescriptionText.Text = newMsg
+	if newMsg ~= '' then
+		loadingContainer.Visible = false
+		errorContainer.Visible = true
+		teleportContainer.Visible = false
+	end
+end
+
+local function OnUiMessage(msgType, newMsg)
+	if msgType == Enum.UiMessageType.UiMessageInfo then
+		teleportText.Text = newMsg
+		if newMsg ~= '' then
+			loadingContainer.Visible = false
+			errorContainer.Visible = false
+			teleportContainer.Visible = true
+		end
+	elseif msgType == Enum.UiMessageType.UiMessageError then
+		OnErrorMessage(newMsg)
+	end
+end
+
 do
 	local lastUpdate = tick()
-	RunService:BindToRenderStep("LoadingGui3D", Enum.RenderPriority.Last.Value, function()
+	RunService:BindToRenderStep(renderStepGUID, Enum.RenderPriority.Last.Value, function()
 		local now = tick()
 		local delta = now - lastUpdate
 
@@ -306,6 +368,7 @@ do
 		local rotation = delta * ROTATIONS_PER_SECOND * 360
 		spinnerRotation = spinnerRotation + rotation
 		spinnerImage.Rotation = spinnerRotation
+		teleportImage.Rotation = spinnerRotation
 
 		lastUpdate = now
 	end)
@@ -332,13 +395,13 @@ else
 	ReplicatedFirst.RemoveDefaultLoadingGuiSignal:connect(OnDefaultLoadingGuiRemoved)
 end
 
-GuiService.ErrorMessageChanged:connect(function()
-	-- TODO
-end)
+GuiService.UiMessageChanged:connect(OnUiMessage)
+OnUiMessage(Enum.UiMessageType.UiMessageInfo, GuiService:GetUiMessage())
 
-GuiService.UiMessageChanged:connect(function(type, newMessage)
-	-- TODO
+GuiService.ErrorMessageChanged:connect(function()
+	OnErrorMessage(GuiService:GetErrorMessage())
 end)
+OnErrorMessage(GuiService:GetErrorMessage())
 
 return LoadingScreen
 
