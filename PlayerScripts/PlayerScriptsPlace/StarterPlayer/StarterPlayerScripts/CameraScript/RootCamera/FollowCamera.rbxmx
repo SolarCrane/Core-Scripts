@@ -45,6 +45,8 @@ local function CreateFollowCamera()
 	local tweenMaxSpeed = math.rad(250)
 	local timeBeforeAutoRotate = 2
 	
+	local accumulatedYRotation = 0
+
 	local lastUpdate = tick()
 	module.LastUserPanCamera = tick()
 	function module:Update()
@@ -66,9 +68,12 @@ local function CreateFollowCamera()
 		end
 		
 		if lastUpdate then
-			
-			if self:ShouldUseVRRotation() then				
-				self.RotateInput = self.RotateInput + self:GetVRRotationInput()
+			if self:ShouldUseVRRotation() then
+				local VRRotateInput = self:GetVRRotationInput()
+				self.RotateInput = self.RotateInput + VRRotateInput
+				if VRRotateInput ~= Vector2.new() then
+					userPanningTheCamera = true
+				end
 			else
 				-- Cap out the delta to 0.1 so we don't get some crazy things when we re-resume from
 				local delta = math.min(0.1, now - lastUpdate)
@@ -95,6 +100,7 @@ local function CreateFollowCamera()
 		-- Reset tween speed if user is panning
 		if userPanningTheCamera then
 			tweenSpeed = 0
+			accumulatedYRotation = 0
 			module.LastUserPanCamera = tick()
 		end
 		
@@ -143,12 +149,20 @@ local function CreateFollowCamera()
 								self.RotateInput = self.RotateInput + Vector2.new(y * percent, 0)
 							end
 						end
-					elseif not (isInFirstPerson or userRecentlyPannedCamera) and (HasVRAPI and not UserInputService.VREnabled) then
+					elseif not (isInFirstPerson or userRecentlyPannedCamera) then
 						local lastVec = -(self.LastCameraTransform.p - subjectPosition)
 						local y = findAngleBetweenXZVectors(lastVec, self:GetCameraLook())
 						-- Check for NaNs
 						if IsFinite(y) and math.abs(y) > 0.0001 then
-							self.RotateInput = self.RotateInput + Vector2.new(y, 0)
+							if HasVRAPI and UserInputService.VREnabled then
+								accumulatedYRotation = accumulatedYRotation + y
+								if math.abs(accumulatedYRotation) > math.rad(20) then
+									self.RotateInput = self.RotateInput + Vector2.new(accumulatedYRotation, 0)
+									accumulatedYRotation = 0
+								end
+							else
+								self.RotateInput = self.RotateInput + Vector2.new(y, 0)
+							end
 						end
 					end
 				end
