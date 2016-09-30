@@ -17,10 +17,7 @@ scriptContext:AddCoreScriptLocal("CoreScripts/Topbar", RobloxGui)
 -- SettingsScript
 local luaControlsSuccess, luaControlsFlagValue = pcall(function() return settings():GetFFlag("UseLuaCameraAndControl") end)
 
-local vrKeyboardSuccess, vrKeyboardFlagValue = pcall(function() return settings():GetFFlag("UseVRKeyboardInLua") end)
-local useVRKeyboard = (vrKeyboardSuccess and vrKeyboardFlagValue == true)
-
--- MainBotChatScript (the Lua part of Dialogs)
+-- MainBotChatScript (the Lua part of Dialogs)
 scriptContext:AddCoreScriptLocal("CoreScripts/MainBotChatScript2", RobloxGui)
 
 -- In-game notifications script
@@ -62,9 +59,8 @@ if touchEnabled then -- touch devices don't use same control frame
 	RobloxGui.ControlFrame.BottomLeftControl.Visible = false
 end
 
-if useVRKeyboard then
-	require(RobloxGui.Modules.VR.VirtualKeyboard)
-end
+-- TODO: Only do this when VR is turned on?
+require(RobloxGui.Modules.VR.VirtualKeyboard)
 
 
 -- Boot up the VR App Shell

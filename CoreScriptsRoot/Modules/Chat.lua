@@ -115,11 +115,6 @@ end
 
 --[[ END OF SCRIPT VARIABLES ]]
 
-local function GetLuaChatFilteringFlag()
-  local flagSuccess, flagValue = pcall(function() return settings():GetFFlag("LuaChatFiltering") end)
-  return flagSuccess and flagValue == true
-end
-
 local Util = {}
 do
   -- Check if we are running on a touch device
@@ -371,10 +366,6 @@ do
   local PRINTABLE_CHARS = '[^' .. string.char(32) .. '-' ..  string.char(126) .. ']'
   local WHITESPACE_CHARS = '(' .. string.rep('%s', 7) .. ')%s+'
   function Util.FilterUnprintableCharacters(str)
-    if not GetLuaChatFilteringFlag() then
-      return str
-    end
-
     local result = str:gsub(PRINTABLE_CHARS, '');
     result = str:gsub(WHITESPACE_CHARS, '%1');
     return result
@@ -1340,10 +1331,6 @@ local function CreateChatBarWidget(settings)
 
   local sentMessageTimeQueue = {}
   function this:FloodCheck()
-    if not GetLuaChatFilteringFlag() then
-      return false
-    end
-
     while sentMessageTimeQueue[1] and tick() - sentMessageTimeQueue[1] > FLOOD_CHECK_MESSAGE_INTERVAL do
       table.remove(sentMessageTimeQueue, 1)
     end
