@@ -55,6 +55,35 @@ local function cancelCountdown()
 	countdownPanel:SetVisible(false)
 end
 
+local function beginRecenteringAsync()
+	isCountingDown = true
+	countdownPanel:SetVisible(true)
+
+	ContextActionService:BindCoreAction(cancelShortcutName, function(actionName, inputState, inputObj)
+		if inputState == Enum.UserInputState.Begin then
+			cancelCountdown()
+		end
+	end, false, Enum.KeyCode.ButtonB)
+
+	for i = 3, 1, -1 do
+		if isCountingDown then
+			countdown.Text = tostring(i)
+			wait(1)
+		end
+	end
+
+	if isCountingDown then
+		InputService:RecenterUserHeadCFrame() 
+	end
+
+	countdownPanel:SetVisible(false)
+	isCountingDown = false
+
+	ContextActionService:UnbindCoreAction(cancelShortcutName)
+
+	VRHub:FireModuleClosed(RecenterModule.ModuleName)
+end
+
 VRHub.ModuleOpened.Event:connect(function(moduleName)
 	if moduleName ~= RecenterModule.ModuleName then
 		local module = VRHub:GetModule(moduleName)
@@ -63,6 +92,14 @@ VRHub.ModuleOpened.Event:connect(function(moduleName)
 		end
 	end
 end)
+
+function RecenterModule:RequestRecenter()
+	if isCountingDown then
+		return false
+	end
+	spawn(beginRecenteringAsync)
+	return true
+end
 
 function RecenterModule:SetVisible(visible)
 	if visible then
@@ -75,32 +112,7 @@ function RecenterModule:SetVisible(visible)
 		end
 
 		spawn(function()
-			isCountingDown = true
-			countdownPanel:SetVisible(true)
-
-			ContextActionService:BindCoreAction(cancelShortcutName, function(actionName, inputState, inputObj)
-				if inputState == Enum.UserInputState.Begin then
-					cancelCountdown()
-				end
-			end, false, Enum.KeyCode.ButtonB)
-
-			for i = 3, 1, -1 do
-				if isCountingDown then
-					countdown.Text = tostring(i)
-					wait(1)
-				end
-			end
-
-			if isCountingDown then
-				InputService:RecenterUserHeadCFrame() 
-			end
-
-			countdownPanel:SetVisible(false)
-			isCountingDown = false
-
-			ContextActionService:UnbindCoreAction(cancelShortcutName)
-
-			VRHub:FireModuleClosed(RecenterModule.ModuleName)
+			beginRecenteringAsync()
 		end)
 	else
 		cancelCountdown()
